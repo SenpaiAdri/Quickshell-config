@@ -177,4 +177,64 @@ ShellRoot {
             onHideRequested: wallWin.visible = false
         }
     }
+
+    PanelWindow {
+        id: launcherWin
+        anchors {
+            top: true
+            bottom: true
+            left: true
+            right: true
+        }
+        exclusionMode: ExclusionMode.Ignore
+        aboveWindows: true
+        focusable: true
+        visible: false
+        color: "transparent"
+
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+
+        HyprlandFocusGrab {
+            windows: [launcherWin]
+            active: launcherWin.visible
+            onCleared: launcherWin.visible = false
+        }
+
+        IpcHandler {
+            target: "launcher"
+            function toggle(): void {
+                launcherWin.visible = !launcherWin.visible;
+                if (launcherWin.visible)
+                    launcher.open();
+            }
+            function show(): void {
+                launcherWin.visible = true;
+                launcher.open();
+            }
+            function open(): void {
+                launcherWin.visible = true;
+                launcher.open();
+            }
+            function hide(): void {
+                launcherWin.visible = false;
+            }
+        }
+
+        // Dim backdrop — click outside to dismiss
+        MouseArea {
+            anchors.fill: parent
+            onClicked: launcherWin.visible = false
+        }
+
+        AppLauncher {
+            id: launcher
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Theme.launcherTopMargin
+            width: Theme.launcherWidth
+            // Height grows with results (search + up to 8 rows), capped
+            height: Theme.launcherPadding * 2 + 48 + 8 + Math.min(8, Math.max(1, launcher.resultCount)) * (Theme.launcherRowHeight + 2) + 8
+            onHideRequested: launcherWin.visible = false
+        }
+    }
 }

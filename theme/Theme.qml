@@ -82,4 +82,22 @@ QtObject {
     property color wallThumbBorder: "#26ffffff"
     property color wallActiveBorder: "#ececec"
     property real wallSideOpacity: 0.55
+
+    // --- app launcher (rofi drun replacement) ---
+    property int launcherWidth: 560
+    property int launcherTopMargin: 220
+    property int launcherRadius: 18
+    property color launcherBg: "#e6141414"
+    property color launcherBorder: "#26ffffff"
+    property int launcherPadding: 16
+    property int launcherRowHeight: 52
+    property int launcherRowRadius: 12
+    property color launcherRowHover: "#14ffffff"
+    property color launcherRowSelected: "#1effffff"
+    property color launcherText: "#ececec"
+    property color launcherDim: "#BABABA"
+    property string launcherFont: "Poppins"
+    property int launcherTitleSize: 14
+    property int launcherBodySize: 13
+    property int launcherSmallSize: 11
 }
