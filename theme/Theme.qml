@@ -100,4 +100,24 @@ QtObject {
     property int launcherTitleSize: 14
     property int launcherBodySize: 13
     property int launcherSmallSize: 11
+
+    // --- power menu (wlogout replacement, centered icon grid) ---
+    property int powerWidth: 640
+    property int powerTileW: 104
+    property int powerTileH: 128
+    property int powerIconSize: 34
+    property int powerRadius: 18
+    property color powerBg: "#e6141414"
+    property color powerBorder: "#26ffffff"
+    property int powerPadding: 20
+    property int powerSpacing: 12
+    property color powerTileBg: "#0dffffff"
+    property color powerTileBorder: "#33ffffff"
+    property color powerTileSelected: "#1effffff"
+    property color powerDanger: "#f38ba8"
+    property color powerText: "#ececec"
+    property color powerDim: "#BABABA"
+    property string powerFont: "Poppins"
+    property int powerLabelSize: 13
+    property int powerKeySize: 11
 }

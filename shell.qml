@@ -237,4 +237,81 @@ ShellRoot {
             onHideRequested: launcherWin.visible = false
         }
     }
+
+    PanelWindow {
+        id: powerWin
+        anchors {
+            top: true
+            bottom: true
+            left: true
+            right: true
+        }
+        exclusionMode: ExclusionMode.Ignore
+        aboveWindows: true
+        focusable: true
+        visible: false
+        color: "transparent"
+
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+
+        HyprlandFocusGrab {
+            windows: [powerWin]
+            active: powerWin.visible
+            onCleared: powerWin.visible = false
+        }
+
+        IpcHandler {
+            target: "powermenu"
+            function toggle(): void {
+                powerWin.visible = !powerWin.visible;
+                if (powerWin.visible)
+                    powerMenu.open();
+            }
+            function show(): void {
+                powerWin.visible = true;
+                powerMenu.open();
+            }
+            function open(): void {
+                powerWin.visible = true;
+                powerMenu.open();
+            }
+            function hide(): void {
+                powerWin.visible = false;
+            }
+        }
+
+        // Dim backdrop — click outside cancels confirmation, else dismisses
+        Rectangle {
+            anchors.fill: parent
+            color: "#bf11111b"
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (powerMenu.confirming)
+                        powerMenu.cancel();
+                    else
+                        powerWin.visible = false;
+                }
+            }
+        }
+
+        PowerMenu {
+            id: powerMenu
+            anchors.centerIn: parent
+            width: powerMenu.collapsed ? Theme.powerTileW + Theme.powerPadding * 2 : Theme.powerWidth
+            height: Theme.powerPadding * 2 + Theme.powerTileH
+
+            // Dynamic-Island-style spring: slight overshoot as the card
+            // morphs between full menu and single-tile confirmation.
+            Behavior on width {
+                SpringAnimation {
+                    spring: 3.5
+                    damping: 0.3
+                }
+            }
+
+            onHideRequested: powerWin.visible = false
+        }
+    }
 }
