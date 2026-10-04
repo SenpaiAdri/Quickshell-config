@@ -1,5 +1,6 @@
-// One wifi network row: signal bars, SSID, lock/check, optional password box.
-// Pure view — parent wires clicked() / passwordEntered().
+// One wifi network row: signal bars, SSID, lock/check, optional password box,
+// optional connected-network panel with Disconnect.
+// Pure view — parent wires clicked() / passwordEntered() / disconnectRequested().
 import QtQuick
 
 import "../theme"
@@ -12,9 +13,11 @@ Column {
     property bool active: false
     property bool connecting: false
     property bool expanded: false
+    property bool manage: false
 
     signal clicked()
     signal passwordEntered(password: string)
+    signal disconnectRequested()
 
     width: parent.width
 
@@ -148,12 +151,69 @@ Column {
             font.pixelSize: Theme.wifiBodySize
             echoMode: TextInput.Password
             onAccepted: {
+                if (pwdInput.text === "")
+                    return;
                 root.passwordEntered(pwdInput.text);
                 pwdInput.text = "";
             }
             onVisibleChanged: {
                 if (visible)
                     forceActiveFocus();
+            }
+        }
+    }
+
+    // Inline connected-network panel: status + Disconnect button.
+    Rectangle {
+        visible: root.manage
+        width: parent.width
+        height: root.manage ? 48 : 0
+        radius: Theme.wifiRowRadius
+        color: "#0dffffff"
+        border.color: "#33ffffff"
+        border.width: 1
+
+        Row {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 10
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 110 - 10
+                text: "Connected"
+                elide: Text.ElideRight
+                color: Theme.wifiDim
+                font.family: Theme.wifiFont
+                font.pixelSize: Theme.wifiSmallSize
+            }
+
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 110
+                height: 30
+                radius: 8
+                color: discMouse.containsMouse ? Theme.wifiRowHover : "transparent"
+                border.color: "#33ffffff"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "Disconnect"
+                    color: Theme.wifiText
+                    font.family: Theme.wifiFont
+                    font.pixelSize: Theme.wifiSmallSize
+                }
+
+                MouseArea {
+                    id: discMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: root.disconnectRequested()
+                }
             }
         }
     }

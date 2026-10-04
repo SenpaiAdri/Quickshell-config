@@ -43,14 +43,14 @@ QtObject {
     property int labelSize: 13
 
     // --- wifi menu ---
-    property int wifiWidth: 360
+    property int wifiWidth: 400
     property int wifiHeight: 460
     property int wifiTopMargin: 36
     property int wifiRightMargin: 8
     property int wifiRadius: 16
     property color wifiBg: "#e6141414"
     property color wifiBorder: "#26ffffff"
-    property int wifiPadding: 12
+    property int wifiPadding: 20
     property int wifiHeaderHeight: 56
     property int wifiFooterHeight: 52
     property int wifiRowHeight: 52

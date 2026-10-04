@@ -16,8 +16,15 @@ Rectangle {
     property bool busy: false
     property string status: ""
     property string pendingSsid: ""
+    property string manageSsid: ""
+    property bool hiddenExpanded: false
     property string connectingSsid: ""
     property var known: ({})
+
+    // Footer stack heights: rescan (40) + hidden button (40) + optional
+    // hidden panel (144). The extra 4s are the column gaps; the trailing
+    // -16 in the list height keeps slack so the fixed window never clips.
+    property int footerH: 40 + 4 + 40 + (hiddenExpanded ? 4 + 144 : 0)
 
     signal hideRequested()
 
@@ -74,9 +81,9 @@ Rectangle {
             id: actionErr
         }
         onExited: {
-            if (root.action === "connect") {
+            if (actionProc.action === "connect") {
                 if (exitCode === 0) {
-                    setStatus("Connected to " + root.actionSsid);
+                    setStatus("Connected to " + actionProc.actionSsid);
                     root.pendingSsid = "";
                     refreshSoon.restart();
                     hideSoon.restart();
@@ -86,8 +93,43 @@ Rectangle {
                 }
                 root.connectingSsid = "";
                 root.busy = false;
-            } else if (root.action === "toggle") {
+            } else if (actionProc.action === "toggle") {
                 refresh();
+            } else if (actionProc.action === "disconnect") {
+                root.busy = false;
+                if (exitCode === 0) {
+                    root.manageSsid = "";
+                    setStatus("Disconnected");
+                    refreshSoon.restart();
+                } else {
+                    var derr = actionErr.text.trim().split("\n").pop() || "Disconnect failed";
+                    setStatus(derr.length > 60 ? derr.slice(0, 60) + "…" : derr);
+                }
+            }
+        }
+    }
+    // Resolves the active Wi-Fi connection's UUID so doDisconnect()
+    // targets exactly this machine's wireless uplink (iface name varies).
+    Process {
+        id: activeProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var uuid = "";
+                var lines = text.split("\n");
+                for (var i = 0; i < lines.length; i++) {
+                    var parts = lines[i].trim().split(":");
+                    if (parts.length >= 2 && parts[1] === "802-11-wireless" && parts[0] !== "") {
+                        uuid = parts[0];
+                        break;
+                    }
+                }
+                if (uuid === "") {
+                    root.busy = false;
+                    setStatus("Not connected");
+                } else {
+                    actionProc.action = "disconnect";
+                    actionProc.exec(["nmcli", "con", "down", "uuid", uuid]);
+                }
             }
         }
     }
@@ -114,6 +156,10 @@ Rectangle {
 
     // ---- public ops ----
     function refresh(): void {
+        // Menus open in a clean state (matches GNOME/Windows panels).
+        root.pendingSsid = "";
+        root.manageSsid = "";
+        root.hiddenExpanded = false;
         root.busy = true;
         setStatus("Scanning…");
         stateProc.exec(["nmcli", "-t", "-f", "WIFI", "g"]);
@@ -122,6 +168,12 @@ Rectangle {
     }
 
     function rescan(): void {
+        if (root.busy)
+            return;
+        // A fresh scan rebuilds the list (wiping delegates), so collapse
+        // any inline prompt rather than silently dropping typed input.
+        root.pendingSsid = "";
+        root.manageSsid = "";
         setStatus("Scanning…");
         root.busy = true;
         actionProc.action = "rescan";
@@ -131,17 +183,55 @@ Rectangle {
 
     function toggleWifi(): void {
         actionProc.action = "toggle";
+        root.busy = true;
+        setStatus(root.wifiEnabled ? "Turning Wi-Fi off…" : "Turning Wi-Fi on…");
         actionProc.exec(["nmcli", "radio", "wifi", root.wifiEnabled ? "off" : "on"]);
     }
 
-    function rowClicked(ssid: string, secured: bool): void {
+    function rowClicked(ssid: string, secured: bool, active: bool): void {
         if (root.connectingSsid !== "" || !root.wifiEnabled)
             return;
+        if (active) {
+            // Connected row expands a Disconnect panel (GNOME/Windows parity),
+            // never a redundant reconnect.
+            root.manageSsid = (root.manageSsid === ssid) ? "" : ssid;
+            root.pendingSsid = "";
+            return;
+        }
+        root.manageSsid = "";
         if (root.known[ssid] || !secured) {
             doConnect(ssid, "");
         } else {
             root.pendingSsid = (root.pendingSsid === ssid) ? "" : ssid;
         }
+    }
+
+    function doDisconnect(): void {
+        root.manageSsid = "";
+        root.busy = true;
+        setStatus("Disconnecting…");
+        activeProc.exec(["nmcli", "-t", "-f", "UUID,TYPE", "con", "show", "--active"]);
+    }
+
+    function doConnectHidden(ssid: string, password: string): void {
+        var name = ssid.trim();
+        if (name === "" || root.connectingSsid !== "")
+            return;
+        root.hiddenExpanded = false;
+        hiddenSsidInput.text = "";
+        hiddenPwInput.text = "";
+        root.pendingSsid = "";
+        root.manageSsid = "";
+        root.connectingSsid = name;
+        root.busy = true;
+        setStatus("Connecting to " + name + "…");
+        actionProc.action = "connect";
+        actionProc.actionSsid = name;
+        var cmd = ["nmcli", "-w", "15", "dev", "wifi", "connect", name];
+        if (password !== "")
+            cmd = cmd.concat(["password", password]);
+        cmd = cmd.concat(["hidden", "yes"]);
+        actionProc.exec(cmd);
     }
 
     function doConnect(ssid: string, password: string): void {
@@ -195,10 +285,16 @@ Rectangle {
         networks.clear();
         for (var j = 0; j < arr.length; j++)
             networks.append(arr[j]);
+        // Collapse inline panels whose network vanished from the scan so a
+        // stale prompt can never target a network that is no longer there.
+        if (root.pendingSsid !== "" && !(root.pendingSsid in bySsid))
+            root.pendingSsid = "";
+        if (root.manageSsid !== "" && (!(root.manageSsid in bySsid) || !bySsid[root.manageSsid].active))
+            root.manageSsid = "";
         root.busy = false;
         if (arr.length === 0 && root.wifiEnabled)
             setStatus("No networks found");
-        else if (root.connectingSsid === "")
+        else if (root.connectingSsid === "" && root.status !== "Wi-Fi is off")
             setStatus("");
     }
 
@@ -210,10 +306,11 @@ Rectangle {
 
         // Header: title + status + toggle + close
         Item {
-            width: parent.width - Theme.wifiPadding * 2
+            width: parent.width
             height: Theme.wifiHeaderHeight
             Text {
                 anchors.left: parent.left
+                anchors.leftMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Wi-Fi"
                 color: Theme.wifiText
@@ -252,6 +349,7 @@ Rectangle {
             Text {
                 id: closeBtn
                 anchors.right: parent.right
+                anchors.rightMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
                 text: "✕"
                 color: Theme.wifiDim
@@ -266,7 +364,7 @@ Rectangle {
         }
 
         Text {
-            width: parent.width - Theme.wifiPadding * 2
+            width: parent.width
             height: 20
             visible: root.status !== ""
             text: root.status
@@ -278,8 +376,8 @@ Rectangle {
 
         ListView {
             id: netList
-            width: parent.width - Theme.wifiPadding * 2
-            height: parent.height - Theme.wifiHeaderHeight - (root.status !== "" ? 24 : 4) - Theme.wifiFooterHeight - 12
+            width: parent.width
+            height: parent.height - Theme.wifiHeaderHeight - (root.status !== "" ? 24 : 4) - root.footerH - 16
             clip: true
             spacing: 2
             model: networks
@@ -290,16 +388,18 @@ Rectangle {
                 active: model.active
                 connecting: model.ssid === root.connectingSsid
                 expanded: model.ssid === root.pendingSsid
-                onClicked: root.rowClicked(model.ssid, model.secured)
+                manage: model.ssid === root.manageSsid
+                onClicked: root.rowClicked(model.ssid, model.secured, model.active)
                 onPasswordEntered: function(pw) {
                     root.doConnect(model.ssid, pw);
                 }
+                onDisconnectRequested: root.doDisconnect()
             }
         }
 
         // Footer: rescan
         Rectangle {
-            width: parent.width - Theme.wifiPadding * 2
+            width: parent.width
             height: 40
             radius: Theme.wifiRowRadius
             color: rescanMouse.containsMouse ? Theme.wifiRowHover : "transparent"
@@ -315,6 +415,133 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 onClicked: root.rescan()
+            }
+        }
+
+        // Footer: join hidden network (SSID broadcast disabled)
+        Rectangle {
+            width: parent.width
+            height: 40
+            radius: Theme.wifiRowRadius
+            color: hiddenMouse.containsMouse ? Theme.wifiRowHover : "transparent"
+            Text {
+                anchors.centerIn: parent
+                text: (root.hiddenExpanded ? "▾  " : "＋  ") + "Join hidden network…"
+                color: Theme.wifiDim
+                font.family: Theme.wifiFont
+                font.pixelSize: Theme.wifiBodySize
+            }
+            MouseArea {
+                id: hiddenMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: {
+                    root.hiddenExpanded = !root.hiddenExpanded;
+                    root.pendingSsid = "";
+                    root.manageSsid = "";
+                    if (root.hiddenExpanded)
+                        hiddenSsidInput.forceActiveFocus();
+                }
+            }
+        }
+
+        // Hidden-network form: SSID + optional password + Join.
+        // Fixed height math (44 + 44 + 40 + 2×8 spacing = 144) must match
+        // footerH above so the list shrinks instead of overflowing.
+        Column {
+            visible: root.hiddenExpanded
+            width: parent.width
+            height: root.hiddenExpanded ? 144 : 0
+            spacing: 8
+
+            Rectangle {
+                width: parent.width
+                height: 44
+                radius: Theme.wifiRowRadius
+                color: "#0dffffff"
+                border.color: "#33ffffff"
+                border.width: 1
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: hiddenSsidInput.text === ""
+                    text: "Network name (SSID)…"
+                    color: "#66ffffff"
+                    font.family: Theme.wifiFont
+                    font.pixelSize: Theme.wifiSmallSize
+                }
+                TextInput {
+                    id: hiddenSsidInput
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.wifiText
+                    selectionColor: "#66ffffff"
+                    font.family: Theme.wifiFont
+                    font.pixelSize: Theme.wifiBodySize
+                    maximumLength: 32
+                    onAccepted: hiddenPwInput.forceActiveFocus()
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 44
+                radius: Theme.wifiRowRadius
+                color: "#0dffffff"
+                border.color: "#33ffffff"
+                border.width: 1
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: hiddenPwInput.text === ""
+                    text: "Password (leave empty if open)…"
+                    color: "#66ffffff"
+                    font.family: Theme.wifiFont
+                    font.pixelSize: Theme.wifiSmallSize
+                }
+                TextInput {
+                    id: hiddenPwInput
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.wifiText
+                    selectionColor: "#66ffffff"
+                    font.family: Theme.wifiFont
+                    font.pixelSize: Theme.wifiBodySize
+                    echoMode: TextInput.Password
+                    onAccepted: root.doConnectHidden(hiddenSsidInput.text, hiddenPwInput.text)
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 40
+                radius: Theme.wifiRowRadius
+                color: joinMouse.containsMouse ? Theme.wifiRowHover : "#0dffffff"
+                border.color: "#33ffffff"
+                border.width: 1
+                opacity: hiddenSsidInput.text.trim() === "" ? 0.5 : 1
+                Text {
+                    anchors.centerIn: parent
+                    text: "Join"
+                    color: Theme.wifiText
+                    font.family: Theme.wifiFont
+                    font.pixelSize: Theme.wifiBodySize
+                    font.bold: true
+                }
+                MouseArea {
+                    id: joinMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: root.doConnectHidden(hiddenSsidInput.text, hiddenPwInput.text)
+                }
             }
         }
     }
