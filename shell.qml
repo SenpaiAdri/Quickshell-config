@@ -477,6 +477,12 @@ ShellRoot {
             });
         }
 
+        function removeGroup(key: string): void {
+            history = history.filter(function(h) {
+                return ((((h && h.app) || "Notification") + "").toLowerCase() !== key);
+            });
+        }
+
         function toggleDnd(): void {
             dnd = !dnd;
         }
@@ -628,6 +634,10 @@ ShellRoot {
             onRemoveRequested: function(i) {
                 notifState.log("history remove tap index=" + i);
                 notifState.removeHistory(i);
+            }
+            onRemoveGroupRequested: function(k) {
+                notifState.log("history remove group key=" + k);
+                notifState.removeGroup(k);
             }
             onDndToggled: notifState.toggleDnd()
         }

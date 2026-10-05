@@ -24,7 +24,43 @@ Rectangle {
     signal hideRequested()
     signal clearRequested()
     signal removeRequested(int index)
+    signal removeGroupRequested(string appKey)
     signal dndToggled()
+
+    // App-grouped view of history: newest group first, newest item first
+    // within each group. Expanded/collapsed state lives here (keyed by
+    // lowercase app name) so it survives history updates.
+    property var expandedGroups: ({})
+    readonly property var groups: {
+        var out = [];
+        for (var i = 0; i < root.history.length; i++) {
+            var h = root.history[i];
+            var key = (((h && h.app) || "Notification") + "").toLowerCase();
+            var gi = -1;
+            for (var j = 0; j < out.length; j++) {
+                if (out[j].key === key) {
+                    gi = j;
+                    break;
+                }
+            }
+            if (gi < 0) {
+                out.push({
+                    key: key,
+                    app: (h && h.app) || "Notification",
+                    items: [i]
+                });
+            } else {
+                out[gi].items.push(i);
+            }
+        }
+        return out;
+    }
+
+    function toggleGroup(key: string): void {
+        var e = Object.assign({}, root.expandedGroups);
+        e[key] = !e[key];
+        root.expandedGroups = e;
+    }
 
     // 0 = dot, 1 = full card. Animated once per open (OutExpo: fast
     // expansion, soft landing — the Dynamic Island feel).
@@ -224,35 +260,152 @@ Rectangle {
             height: parent.height - 30 - 1 - 16
             visible: root.history.length > 0
             clip: true
-            spacing: 8
-            model: root.history
-            delegate: Rectangle {
+            spacing: 12
+            model: root.groups
+            // One group per app: singles render exactly like before; multi
+            // stacks show the latest card with older cards peeking behind
+            // (macOS style), click fans out to the full list.
+            delegate: Item {
+                id: groupRoot
                 required property var modelData
                 required property int index
                 width: ListView.view.width
-                height: itemRow.implicitHeight + 28
-                radius: 12
-                color: delHover.containsMouse ? Theme.notifHover : Theme.notifRowBg
-                border.color: Theme.notifBorder
-                border.width: 1
-                clip: true
+                height: cardsCol.implicitHeight + (isStack ? (gflats.length > 2 ? 12 : 8) : 0)
 
-                readonly property string imgSrc: {
-                    var p = modelData.img || "";
-                    if (p === "")
-                        return "";
-                    return p.indexOf("://") >= 0 ? p : "file://" + p;
+                readonly property string gkey: modelData.key
+                readonly property string gapp: modelData.app
+                readonly property var gflats: modelData.items
+                readonly property bool gopen: !!root.expandedGroups[modelData.key]
+                readonly property bool isStack: gflats.length > 1 && !gopen
+                readonly property var visFlats: isStack ? [gflats[0]] : gflats
+                readonly property bool showHeader: gflats.length > 1 && gopen
+                readonly property real firstH: (cardsRep.count > 0 && cardsRep.itemAt(0)) ? cardsRep.itemAt(0).height : 0
+
+                // Peek layers behind the top card (painted first = bottom).
+                Rectangle {
+                    visible: groupRoot.isStack && groupRoot.gflats.length > 2
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: groupRoot.firstH - 4
+                    width: parent.width - 40
+                    height: 16
+                    radius: 10
+                    opacity: 0.75
+                    color: Theme.notifRowBg
+                    border.color: Theme.notifBorder
+                    border.width: 1
+                }
+                Rectangle {
+                    visible: groupRoot.isStack
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: groupRoot.firstH - 6
+                    width: parent.width - 20
+                    height: 14
+                    radius: 9
+                    color: Theme.notifRowBg
+                    border.color: Theme.notifBorder
+                    border.width: 1
                 }
 
-                // Row hover layer FIRST (bottom of stacking) so it never
-                // swallows presses meant for the close button: hover is
-                // broadcast to all layers, presses go to the topmost.
-                MouseArea {
-                    id: delHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onPressed: notifState.log("row press index=" + index)
-                }
+                Column {
+                    id: cardsCol
+                    width: parent.width
+                    spacing: groupRoot.showHeader ? 8 : 0
+
+                    // Expanded group header: app + count, collapse, drop all.
+                    Rectangle {
+                        visible: groupRoot.showHeader
+                        width: parent.width
+                        height: visible ? 28 : 0
+                        radius: 12
+                        color: "transparent"
+                        Item {
+                            anchors.fill: parent
+                            anchors.leftMargin: 14
+                            anchors.rightMargin: 14
+                            Text {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: (groupRoot.gapp || "Notification").toUpperCase() + "  ·  " + groupRoot.gflats.length
+                                color: Theme.notifDim
+                                font.family: Theme.notifFont
+                                font.pixelSize: Theme.notifSmallSize
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.right: gCloseText.left
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Collapse"
+                                color: collapseHover.containsMouse ? Theme.notifText : Theme.notifDim
+                                font.family: Theme.notifFont
+                                font.pixelSize: Theme.notifSmallSize
+                                MouseArea {
+                                    id: collapseHover
+                                    anchors.fill: parent
+                                    anchors.margins: -6
+                                    hoverEnabled: true
+                                    onClicked: root.toggleGroup(groupRoot.gkey)
+                                }
+                            }
+                            Text {
+                                id: gCloseText
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "✕"
+                                color: gCloseHover.containsMouse ? Theme.notifText : Theme.notifDim
+                                font.family: Theme.notifFont
+                                font.pixelSize: 12
+                                MouseArea {
+                                    id: gCloseHover
+                                    anchors.fill: parent
+                                    anchors.margins: -8
+                                    hoverEnabled: true
+                                    onClicked: root.removeGroupRequested(groupRoot.gkey)
+                                }
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        id: cardsRep
+                        model: groupRoot.visFlats
+                        delegate: Rectangle {
+                            required property int modelData
+                            readonly property int flat: modelData
+                            readonly property var h: (flat >= 0 && flat < root.history.length) ? root.history[flat] : null
+                            readonly property string app: h ? (h.app || "Notification") : "Notification"
+                            readonly property string summary: h ? h.summary : ""
+                            readonly property string body: h ? h.body : ""
+                            readonly property string stamp: h ? h.stamp : ""
+                            readonly property bool stackTop: groupRoot.isStack
+                            width: groupRoot.width
+                            height: itemRow.implicitHeight + 28
+                            radius: 12
+                            color: delHover.containsMouse ? Theme.notifHover : Theme.notifRowBg
+                            border.color: Theme.notifBorder
+                            border.width: 1
+                            clip: true
+
+                            readonly property string imgSrc: {
+                                var p = h ? (h.img || "") : "";
+                                if (p === "")
+                                    return "";
+                                return p.indexOf("://") >= 0 ? p : "file://" + p;
+                            }
+
+                            // Row hover layer FIRST (bottom of stacking) so it never
+                            // swallows presses meant for the close button.
+                            // Clicking a peeked stack fans it out.
+                            MouseArea {
+                                id: delHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onPressed: notifState.log("row press flat=" + flat)
+                                onClicked: {
+                                    if (stackTop)
+                                        root.toggleGroup(groupRoot.gkey);
+                                }
+                            }
 
                 Row {
                     id: itemRow
@@ -286,30 +439,49 @@ Rectangle {
                         width: parent.width - (imgSrc !== "" ? 44 : 0)
                         spacing: 10
 
-                    // Header: app + stamp + close on one baseline. Plain Item
-                    // (never a Row) so every child can use real anchors —
-                    // anchors inside a positioner break hit geometry.
+                    // Header: app + count + stamp + close on one baseline.
+                    // Plain Item (never a Row) so every child can use real
+                    // anchors — anchors inside a positioner break geometry.
                     Item {
                         width: parent.width
                         height: 18
                         Text {
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 40 - 16 - 12
+                            width: parent.width - 40 - 16 - 12 - (stackTop ? 30 : 0)
                             elide: Text.ElideRight
-                            text: (modelData.app || "Notification").toUpperCase()
+                            text: app.toUpperCase()
                             color: Theme.notifDim
                             font.family: Theme.notifFont
                             font.pixelSize: Theme.notifSmallSize
                             font.bold: true
                         }
+                        Rectangle {
+                            visible: stackTop
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.right: stampText.left
+                            anchors.rightMargin: 6
+                            width: visible ? 24 : 0
+                            height: 18
+                            radius: 9
+                            color: "#1effffff"
+                            Text {
+                                anchors.centerIn: parent
+                                text: groupRoot.gflats.length
+                                color: Theme.notifText
+                                font.family: Theme.notifFont
+                                font.pixelSize: Theme.notifSmallSize
+                                font.bold: true
+                            }
+                        }
                         Text {
+                            id: stampText
                             anchors.right: xText.left
                             anchors.rightMargin: 6
                             anchors.verticalCenter: parent.verticalCenter
                             width: 40
                             horizontalAlignment: Text.AlignRight
-                            text: modelData.stamp
+                            text: stamp
                             color: "#66ffffff"
                             font.family: Theme.notifFont
                             font.pixelSize: Theme.notifSmallSize
@@ -329,8 +501,13 @@ Rectangle {
                                 anchors.fill: parent
                                 anchors.margins: -8
                                 hoverEnabled: true
-                                onPressed: notifState.log("x press index=" + index)
-                                onClicked: root.removeRequested(index)
+                                onPressed: notifState.log("x press flat=" + flat)
+                                onClicked: {
+                                    if (stackTop)
+                                        root.removeGroupRequested(groupRoot.gkey);
+                                    else
+                                        root.removeRequested(flat);
+                                }
                             }
                         }
                     }
@@ -340,7 +517,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         maximumLineCount: 2
                         elide: Text.ElideRight
-                        text: modelData.summary
+                        text: summary
                         color: Theme.notifText
                         font.family: Theme.notifFont
                         font.pixelSize: Theme.notifTitleSize
@@ -352,11 +529,14 @@ Rectangle {
                         wrapMode: Text.Wrap
                         maximumLineCount: 3
                         elide: Text.ElideRight
-                        text: modelData.body
+                        text: body
                         color: Theme.notifDim
                         font.family: Theme.notifFont
                         font.pixelSize: Theme.notifBodySize
                     }
+                    }
+                }
+                        }
                     }
                 }
             }
