@@ -7,7 +7,10 @@ import "../theme"
 
 Rectangle {
     id: root
-    color: Theme.notifBg
+    // Fully opaque (alpha stripped from notifBg): rows are only ~5%
+    // white, so any card translucency lets behind-content bleed through
+    // the list. Opaque card keeps rows readable.
+    color: "#141414"
     // Single continuous morph, same language as the island: every dimension
     // is a function of `progress` (0 dot → 1 full card), driven by exactly
     // one animation. Radius blends from a perfect circle into the card
@@ -289,7 +292,6 @@ Rectangle {
                     width: parent.width - 40
                     height: 16
                     radius: 10
-                    opacity: 0.75
                     color: Theme.notifRowBg
                     border.color: Theme.notifBorder
                     border.width: 1
