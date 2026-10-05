@@ -314,4 +314,66 @@ ShellRoot {
             onHideRequested: powerWin.visible = false
         }
     }
+
+    PanelWindow {
+        id: islandWin
+        anchors {
+            top: true
+            bottom: true
+            left: true
+            right: true
+        }
+        exclusionMode: ExclusionMode.Ignore
+        aboveWindows: true
+        focusable: true
+        visible: false
+        color: "transparent"
+
+        // On-demand keyboard focus (month ←/→, T today, Esc close);
+        // outside-click dismissal via focus grab, like the wifi menu.
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+        Keys.onEscapePressed: island.close()
+
+        HyprlandFocusGrab {
+            windows: [islandWin]
+            active: islandWin.visible
+            onCleared: island.close()
+        }
+
+        IpcHandler {
+            target: "island"
+            function toggle(): void {
+                if (islandWin.visible) {
+                    islandWin.visible = false;
+                } else {
+                    islandWin.visible = true;
+                    island.open();
+                }
+            }
+            function show(): void {
+                islandWin.visible = true;
+                island.open();
+            }
+            function hide(): void {
+                islandWin.visible = false;
+            }
+        }
+
+        // Backdrop — click outside shrinks the island away
+        MouseArea {
+            anchors.fill: parent
+            onClicked: island.close()
+        }
+
+        IslandClock {
+            id: island
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Theme.islandTopMargin
+            width: island.frameW
+            height: island.frameH
+            onHideRequested: islandWin.visible = false
+        }
+    }
 }

@@ -120,4 +120,25 @@ QtObject {
     property string powerFont: "Poppins"
     property int powerLabelSize: 13
     property int powerKeySize: 11
+
+    // --- dynamic island clock/calendar ---
+    property int islandDot: 48
+    property int islandExpandedW: 400
+    property int islandExpandedH: 424
+    property int islandTopMargin: 2
+    property int islandRadiusExpanded: 24
+    property color islandBg: "#e6141414"
+    property color islandBorder: "#26ffffff"
+    property color islandHover: "#14ffffff"
+    property color islandText: "#ececec"
+    property color islandDim: "#BABABA"
+    property color islandAccent: "#ececec"
+    property color islandTodayBg: "#ececec"
+    property color islandTodayText: "#141414"
+    property string islandFont: "Poppins"
+    property int islandHeroSize: 44
+    property int islandSubSize: 13
+    property int islandBodySize: 13
+    property int islandSmallSize: 11
+    property int islandPadding: 20
 }
