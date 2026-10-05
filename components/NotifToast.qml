@@ -26,6 +26,10 @@ Rectangle {
     property var note
     property bool sticky: false
     property int timeoutMs: 6000
+    // Remaining expiry while held: press pauses the timer, release resumes
+    // with what's left (not a fresh full timeout).
+    property int remainingMs: timeoutMs
+    property double timerStart: 0
 
     property real progress: 0
     property bool leaving: false
@@ -58,8 +62,27 @@ Rectangle {
     function show(): void {
         notifState.log("toast show id=" + root.toastId + " sticky=" + root.sticky + " timeout=" + root.timeoutMs);
         enterAnim.start();
-        if (!sticky)
+        if (!sticky) {
+            root.remainingMs = root.timeoutMs;
+            root.timerStart = Date.now();
+            expireTimer.interval = root.remainingMs;
             expireTimer.start();
+        }
+    }
+
+    function pauseExpiry(): void {
+        if (root.sticky || !expireTimer.running)
+            return;
+        root.remainingMs = Math.max(1, expireTimer.interval - (Date.now() - root.timerStart));
+        expireTimer.stop();
+    }
+
+    function resumeExpiry(): void {
+        if (root.sticky || root.leaving || expireTimer.running)
+            return;
+        root.timerStart = Date.now();
+        expireTimer.interval = root.remainingMs;
+        expireTimer.start();
     }
 
     function dismiss(): void {
@@ -151,6 +174,7 @@ Rectangle {
                 mouse.accepted = false;
                 return;
             }
+            root.pauseExpiry();
             snapBack.stop();
             cardHover.pressX = mouse.x;
             cardHover.pressOX = root.dragX;
@@ -177,6 +201,10 @@ Rectangle {
             while (cardHover.samples.length > 2 && now - cardHover.samples[0].t > 120)
                 cardHover.samples.shift();
         }
+        onCanceled: {
+            // Gesture stolen (e.g. another grab) — same as a short release.
+            root.resumeExpiry();
+        }
         onReleased: function(mouse) {
             if (root.leaving)
                 return;
@@ -202,6 +230,7 @@ Rectangle {
                 flingX.start();
             } else {
                 notifState.log("toast snapback id=" + root.toastId + " dist=" + Math.round(dist));
+                root.resumeExpiry();
                 snapBack.start();
             }
         }
@@ -327,17 +356,20 @@ Rectangle {
         }
     }
 
-    // Hover-reveal close, parked on the top-left corner (macOS style).
+    // Hover-reveal close, parked just inside the top-left corner. (Was
+    // -9/-9 overlapping outside, which clipped above the layer surface
+    // for the topmost toast — the window has no headroom there. Inside
+    // keeps every row identical with no window padding changes.)
     Rectangle {
         anchors.left: parent.left
-        anchors.leftMargin: -9
+        anchors.leftMargin: 8
         anchors.top: parent.top
-        anchors.topMargin: -9
+        anchors.topMargin: 8
         width: 22
         height: 22
         radius: 11
         color: "#48484a"
-        opacity: cardHover.containsMouse ? 1 : 0
+        opacity: hoverDetect.containsMouse ? 1 : 0
         visible: opacity > 0
 
         Behavior on opacity {
@@ -361,5 +393,17 @@ Rectangle {
             onClicked: root.dismiss()
         }
     }
+    }
+
+    // Topmost hover detector: Qt reports containsMouse only to the uppermost
+    // hover-enabled area, so the action buttons used to steal hover from
+    // cardHover and the close button flickered (show → steal → hide → show).
+    // This layer sits above everything, tracks hover alone, and accepts no
+    // buttons — presses fall through to cardHover / action / close below.
+    MouseArea {
+        id: hoverDetect
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.NoButton
     }
 }
