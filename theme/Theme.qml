@@ -141,4 +141,30 @@ QtObject {
     property int islandBodySize: 13
     property int islandSmallSize: 11
     property int islandPadding: 20
+
+    // --- notifications: macOS-banner layout, dark theme ---
+    property int notifWidth: 380
+    property int notifTopMargin: 44
+    property int notifRightMargin: 12
+    property int notifSpacing: 10
+    property int notifRadius: 18
+    property color notifBg: "#e6141414"
+    property color notifBorder: "#26ffffff"
+    property color notifHover: "#14ffffff"
+    property int notifPadding: 14
+    property color notifText: "#ececec"
+    property color notifDim: "#BABABA"
+    property color notifAccent: "#ececec"
+    property color notifCritical: "#f38ba8"
+    property color notifLow: "#6c6c6c"
+    property color notifRowBg: "#0dffffff"
+    property color notifDivider: "#14ffffff"
+    property string notifFont: "Poppins"
+    property int notifTitleSize: 13
+    property int notifBodySize: 13
+    property int notifSmallSize: 11
+    property int notifMaxShown: 5
+    property int notifTimeoutMs: 6000
+    property int centerWidth: 400
+    property int centerHeight: 520
 }

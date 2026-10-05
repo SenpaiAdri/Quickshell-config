@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Services.Notifications
 import QtQuick
 
 import "components"
@@ -374,6 +375,259 @@ ShellRoot {
             width: island.frameW
             height: island.frameH
             onHideRequested: islandWin.visible = false
+        }
+    }
+
+    // ---- notifications: server + toast stack + history center ----
+    // State lives here; arrays are always reassigned (never mutated in
+    // place) so bindings and Repeaters update.
+    QtObject {
+        id: notifState
+        property var history: []
+        property int unread: 0
+        property bool dnd: false
+        property var dbg: []
+
+        function log(m: string): void {
+            var t = new Date();
+            var ts = (t.getHours() < 10 ? "0" : "") + t.getHours() + ":" + (t.getMinutes() < 10 ? "0" : "") + t.getMinutes() + ":" + (t.getSeconds() < 10 ? "0" : "") + t.getSeconds();
+            dbg = dbg.concat([ts + " " + m]).slice(-30);
+        }
+
+        function stampNow(): string {
+            var d = new Date();
+            var h = d.getHours(), m = d.getMinutes();
+            return (h < 10 ? "0" + h : "" + h) + ":" + (m < 10 ? "0" + m : "" + m);
+        }
+
+        function notify(n): void {
+            var id = n.id;
+            log("notify id=" + id + " app=" + n.appName + " urg=" + Number(n.urgency) + " exp=" + n.expireTimeout);
+            // Keep the server object alive: untracked notifications may be
+            // destroyed while a toast still references them.
+            n.tracked = true;
+            var stamp = stampNow();
+            history = [{
+                app: n.appName,
+                summary: n.summary,
+                body: n.body,
+                urg: Number(n.urgency),
+                img: n.image || "",
+                stamp: stamp
+            }].concat(history).slice(0, 50);
+            unread++;
+            if (!dnd)
+                spawnToast(n, stamp);
+        }
+
+        function spawnToast(n, stamp: string): void {
+            // Replace semantics: a re-sent id supersedes the old toast.
+            for (var i = toastStack.children.length - 1; i >= 0; i--) {
+                var old = toastStack.children[i];
+                if (old.toastId === n.id)
+                    old.destroy();
+            }
+            var t = n.expireTimeout;
+            var critical = Number(n.urgency) === 2;
+            var sticky = critical && (t === 0 || t < 0);
+            var timeout = sticky ? 0 : (t > 0 ? Math.min(t, 15000) : Theme.notifTimeoutMs);
+            var img = n.image || "";
+            if (img !== "" && img.indexOf("://") < 0)
+                img = "file://" + img;
+            toastComponent.createObject(toastStack, {
+                toastId: n.id,
+                app: n.appName || "Notification",
+                summary: n.summary || "",
+                body: n.body || "",
+                imgSrc: img,
+                stamp: stamp,
+                note: n,
+                sticky: sticky,
+                timeoutMs: timeout
+            });
+            // Cap the stack; oldest non-leaving toast leaves to make room.
+            while (toastStack.children.length > Theme.notifMaxShown) {
+                var victim = null;
+                for (var j = 0; j < toastStack.children.length; j++) {
+                    if (!toastStack.children[j].leaving) {
+                        victim = toastStack.children[j];
+                        break;
+                    }
+                }
+                if (!victim)
+                    break;
+                victim.dismiss();
+            }
+        }
+
+        function openCenter(): void {
+            centerWin.visible = true;
+            center.open();
+            unread = 0;
+        }
+
+        function clearHistory(): void {
+            history = [];
+            unread = 0;
+        }
+
+        function removeHistory(i: int): void {
+            history = history.filter(function(item, j) {
+                return j !== i;
+            });
+        }
+
+        function toggleDnd(): void {
+            dnd = !dnd;
+        }
+
+        function statusJson(): string {
+            var bell = dnd ? "" : "";
+            var tip = dnd ? "Do Not Disturb is on" : (unread > 0 ? unread + " unread notification" + (unread > 1 ? "s" : "") : "No new notifications");
+            var cls = dnd ? "dnd" : (unread > 0 ? "unread" : "");
+            return JSON.stringify({
+                text: bell,
+                tooltip: tip,
+                class: cls
+            });
+        }
+    }
+
+    NotificationServer {
+        id: notifServer
+        keepOnReload: true
+        actionsSupported: true
+        bodySupported: true
+        bodyMarkupSupported: false
+        imageSupported: true
+        inlineReplySupported: false
+        persistenceSupported: true
+        onNotification: function(n) {
+            notifState.notify(n);
+        }
+    }
+
+    PanelWindow {
+        id: toastWin
+        anchors {
+            top: true
+            left: true
+            right: true
+        }
+        margins {
+            top: Theme.notifTopMargin
+        }
+        implicitHeight: toastStack.implicitHeight
+        visible: toastStack.children.length > 0
+        exclusionMode: ExclusionMode.Ignore
+        aboveWindows: true
+        focusable: false
+        color: "transparent"
+
+        mask: Region {
+            item: toastStack
+        }
+
+        Component {
+            id: toastComponent
+            NotifToast {}
+        }
+
+        // Right-aligned stack in a full-width strip: swiped cards stay
+        // visible through their whole travel instead of clipping at a
+        // toast-sized window edge.
+        Column {
+            id: toastStack
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.notifRightMargin
+            width: Theme.notifWidth
+            spacing: Theme.notifSpacing
+        }
+    }
+
+    PanelWindow {
+        id: centerWin
+        anchors {
+            top: true
+            bottom: true
+            left: true
+            right: true
+        }
+        exclusionMode: ExclusionMode.Ignore
+        aboveWindows: true
+        focusable: true
+        visible: false
+        color: "transparent"
+
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+        Keys.onEscapePressed: center.close()
+
+        HyprlandFocusGrab {
+            windows: [centerWin]
+            active: centerWin.visible
+            onCleared: center.close()
+        }
+
+        IpcHandler {
+            target: "notifs"
+            function toggle(): void {
+                if (centerWin.visible)
+                    center.close();
+                else
+                    notifState.openCenter();
+            }
+            function show(): void {
+                notifState.openCenter();
+            }
+            function hide(): void {
+                center.close();
+            }
+            function clear(): void {
+                notifState.clearHistory();
+            }
+            function dnd(): void {
+                notifState.toggleDnd();
+            }
+            function status(): string {
+                return notifState.statusJson();
+            }
+            function debug(): string {
+                var items = [];
+                for (var i = 0; i < toastStack.children.length; i++)
+                    items.push({
+                        id: toastStack.children[i].toastId,
+                        leaving: toastStack.children[i].leaving
+                    });
+                return JSON.stringify({
+                    toasts: items,
+                    log: notifState.dbg
+                });
+            }
+        }
+
+        // Backdrop — click outside shrinks the center away
+        MouseArea {
+            anchors.fill: parent
+            onClicked: center.close()
+        }
+
+        NotifCenter {
+            id: center
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: Theme.notifTopMargin
+            anchors.rightMargin: Theme.notifRightMargin
+            history: notifState.history
+            dnd: notifState.dnd
+            unread: notifState.unread
+            onHideRequested: centerWin.visible = false
+            onClearRequested: notifState.clearHistory()
+            onRemoveRequested: function(i) {
+                notifState.log("history remove tap index=" + i);
+                notifState.removeHistory(i);
+            }
+            onDndToggled: notifState.toggleDnd()
         }
     }
 }
