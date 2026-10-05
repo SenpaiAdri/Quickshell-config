@@ -273,7 +273,7 @@ Rectangle {
                 required property var modelData
                 required property int index
                 width: ListView.view.width
-                height: cardsCol.implicitHeight + (isStack ? (gflats.length > 2 ? 12 : 8) : 0)
+                height: cardsCol.implicitHeight + (isStack ? (gflats.length > 2 ? 14 : 7) : 0)
 
                 readonly property string gkey: modelData.key
                 readonly property string gapp: modelData.app
@@ -284,26 +284,31 @@ Rectangle {
                 readonly property bool showHeader: gflats.length > 1 && gopen
                 readonly property real firstH: (cardsRep.count > 0 && cardsRep.itemAt(0)) ? cardsRep.itemAt(0).height : 0
 
-                // Peek layers behind the top card (painted first = bottom).
+                // Peek cards tucked behind the top card (painted first =
+                // bottom). Each is a full card-sized layer nudged down, so
+                // only a rounded strip shows below the top card — never a
+                // floating sliver poking past the card's corners.
+                // Solid fills: the top card below is opaque, and translucent
+                // peeks would ghost through it — same for the rows.
                 Rectangle {
                     visible: groupRoot.isStack && groupRoot.gflats.length > 2
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: groupRoot.firstH - 4
-                    width: parent.width - 40
-                    height: 16
-                    radius: 10
-                    color: Theme.notifRowBg
+                    y: 14
+                    width: parent.width - 32
+                    height: groupRoot.firstH
+                    radius: 12
+                    color: "#202020"
                     border.color: Theme.notifBorder
                     border.width: 1
                 }
                 Rectangle {
                     visible: groupRoot.isStack
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: groupRoot.firstH - 6
-                    width: parent.width - 20
-                    height: 14
-                    radius: 9
-                    color: Theme.notifRowBg
+                    y: 7
+                    width: parent.width - 16
+                    height: groupRoot.firstH
+                    radius: 12
+                    color: "#202020"
                     border.color: Theme.notifBorder
                     border.width: 1
                 }
@@ -383,7 +388,10 @@ Rectangle {
                             width: groupRoot.width
                             height: itemRow.implicitHeight + 28
                             radius: 12
-                            color: delHover.containsMouse ? Theme.notifHover : Theme.notifRowBg
+                            // Solid equivalents of hover/rowBg over the opaque
+                            // card (both were translucent and let stacked peeks
+                            // ghost through the top card).
+                            color: delHover.containsMouse ? "#262626" : "#202020"
                             border.color: Theme.notifBorder
                             border.width: 1
                             clip: true
