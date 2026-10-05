@@ -42,7 +42,18 @@ Rectangle {
     height: body.implicitHeight + 24
 
     opacity: root.progress * (1 - Math.min(1, root.dragDist / 220))
-    x: (1 - root.progress) * 56
+    x: (1 - root.progress) * 56 + root.dragX
+    // Scale the whole container (background + content) while held so the
+    // card feels picked up. cardHover is declared below — forward ref is
+    // fine (same as the close button's containsMouse binding).
+    scale: cardHover.pressed ? 1.02 : 1
+
+    Behavior on scale {
+        NumberAnimation {
+            duration: 120
+            easing.type: Easing.OutCubic
+        }
+    }
 
     function show(): void {
         notifState.log("toast show id=" + root.toastId + " sticky=" + root.sticky + " timeout=" + root.timeoutMs);
@@ -196,25 +207,16 @@ Rectangle {
         }
     }
 
-    // Swipe layer: everything visible rides here so drags never fight
-    // the stack layout (the Column owns the card's own x/y). Explicit
-    // geometry instead of anchors: anchors would pin x and silently
-    // swallow the drag offset. Slight scale-up while held so the card
-    // feels picked up.
+    // Swipe layer: plain content wrapper. The drag offset + pickup scale
+    // live on the root itself (the Column stack only owns y, so root.x is
+    // free) — that way the background/border move together with the
+    // content instead of the content sliding out of a parked container.
     Item {
         id: slider
-        x: root.dragX
+        x: 0
         y: 0
         width: parent.width
         height: parent.height
-        scale: cardHover.pressed ? 1.02 : 1
-
-        Behavior on scale {
-            NumberAnimation {
-                duration: 120
-                easing.type: Easing.OutCubic
-            }
-        }
 
     Row {
         id: body
