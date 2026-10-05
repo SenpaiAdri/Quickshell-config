@@ -45,7 +45,7 @@ QtObject {
     // --- wifi menu ---
     property int wifiWidth: 400
     property int wifiHeight: 460
-    property int wifiTopMargin: 36
+    property int wifiTopMargin: 28
     property int wifiRightMargin: 8
     property int wifiRadius: 16
     property color wifiBg: "#e6141414"
@@ -144,7 +144,7 @@ QtObject {
 
     // --- notifications: macOS-banner layout, dark theme ---
     property int notifWidth: 380
-    property int notifTopMargin: 44
+    property int notifTopMargin: 28
     property int notifRightMargin: 12
     property int notifSpacing: 10
     property int notifRadius: 18

@@ -179,7 +179,7 @@ Rectangle {
                 required property var modelData
                 required property int index
                 width: ListView.view.width
-                height: itemRow.implicitHeight + 36
+                height: itemRow.implicitHeight + 28
                 radius: 12
                 color: delHover.containsMouse ? Theme.notifHover : Theme.notifRowBg
                 border.color: Theme.notifBorder
@@ -193,14 +193,24 @@ Rectangle {
                     return p.indexOf("://") >= 0 ? p : "file://" + p;
                 }
 
+                // Row hover layer FIRST (bottom of stacking) so it never
+                // swallows presses meant for the close button: hover is
+                // broadcast to all layers, presses go to the topmost.
+                MouseArea {
+                    id: delHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onPressed: notifState.log("row press index=" + index)
+                }
+
                 Row {
                     id: itemRow
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.leftMargin: 15
-                    anchors.rightMargin: 30
-                    anchors.topMargin: 18
+                    anchors.leftMargin: 14
+                    anchors.rightMargin: 14
+                    anchors.topMargin: 14
                     spacing: 8
 
                     Rectangle {
@@ -225,10 +235,16 @@ Rectangle {
                         width: parent.width - (imgSrc !== "" ? 44 : 0)
                         spacing: 10
 
-                    Row {
+                    // Header: app + stamp + close on one baseline. Plain Item
+                    // (never a Row) so every child can use real anchors —
+                    // anchors inside a positioner break hit geometry.
+                    Item {
                         width: parent.width
+                        height: 18
                         Text {
-                            width: parent.width - 44
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 40 - 16 - 12
                             elide: Text.ElideRight
                             text: (modelData.app || "Notification").toUpperCase()
                             color: Theme.notifDim
@@ -237,12 +253,34 @@ Rectangle {
                             font.bold: true
                         }
                         Text {
-                            width: 44
+                            anchors.right: xText.left
+                            anchors.rightMargin: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
                             horizontalAlignment: Text.AlignRight
                             text: modelData.stamp
                             color: "#66ffffff"
                             font.family: Theme.notifFont
                             font.pixelSize: Theme.notifSmallSize
+                        }
+                        Text {
+                            id: xText
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16
+                            horizontalAlignment: Text.AlignHCenter
+                            text: "✕"
+                            color: delXHover.containsMouse ? Theme.notifText : "#66ffffff"
+                            font.family: Theme.notifFont
+                            font.pixelSize: 12
+                            MouseArea {
+                                id: delXHover
+                                anchors.fill: parent
+                                anchors.margins: -8
+                                hoverEnabled: true
+                                onPressed: notifState.log("x press index=" + index)
+                                onClicked: root.removeRequested(index)
+                            }
                         }
                     }
                     Text {
@@ -268,33 +306,6 @@ Rectangle {
                         font.family: Theme.notifFont
                         font.pixelSize: Theme.notifBodySize
                     }
-                    }
-                }
-
-                // Row hover layer FIRST (bottom of stacking) so it never
-                // swallows presses meant for the close button or links:
-                // hover is broadcast to all layers, presses go topmost.
-                MouseArea {
-                    id: delHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                }
-
-                Text {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 10
-                    anchors.top: parent.top
-                    anchors.topMargin: 8
-                    text: "✕"
-                    color: delXHover.containsMouse ? Theme.notifText : "#66ffffff"
-                    font.family: Theme.notifFont
-                    font.pixelSize: 12
-                    MouseArea {
-                        id: delXHover
-                        anchors.fill: parent
-                        anchors.margins: -10
-                        hoverEnabled: true
-                        onClicked: root.removeRequested(index)
                     }
                 }
             }
