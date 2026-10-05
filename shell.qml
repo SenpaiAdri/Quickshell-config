@@ -618,6 +618,8 @@ ShellRoot {
             anchors.right: parent.right
             anchors.topMargin: Theme.notifTopMargin
             anchors.rightMargin: Theme.notifRightMargin
+            width: center.frameW
+            height: center.frameH
             history: notifState.history
             dnd: notifState.dnd
             unread: notifState.unread

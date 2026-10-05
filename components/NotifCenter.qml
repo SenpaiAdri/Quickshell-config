@@ -8,7 +8,11 @@ import "../theme"
 Rectangle {
     id: root
     color: Theme.notifBg
-    radius: Theme.notifRadius
+    // Single continuous morph, same language as the island: every dimension
+    // is a function of `progress` (0 dot → 1 full card), driven by exactly
+    // one animation. Radius blends from a perfect circle into the card
+    // corner — no staged retargets.
+    radius: (1 - root.progress) * Math.min(root.width, root.height) / 2 + root.progress * Theme.notifRadius
     border.color: Theme.notifBorder
     border.width: 1
     clip: true
@@ -22,42 +26,53 @@ Rectangle {
     signal removeRequested(int index)
     signal dndToggled()
 
-    // Same single-driver entry language as the island.
+    // 0 = dot, 1 = full card. Animated once per open (OutExpo: fast
+    // expansion, soft landing — the Dynamic Island feel).
     property real progress: 0
+    property bool exiting: false
 
-    width: Theme.centerWidth
-    height: Theme.centerHeight
-    opacity: root.progress
-    y: (1 - root.progress) * -24
+    readonly property real frameW: Theme.centerDot + (Theme.centerWidth - Theme.centerDot) * root.progress
+    readonly property real frameH: Theme.centerDot + (Theme.centerHeight - Theme.centerDot) * root.progress
+    // Contents fade in over the final stretch of the morph only.
+    readonly property real contentOpacity: Math.min(1, Math.max(0, (root.progress - 0.8) / 0.2))
 
     function open(): void {
-        exitAnim.stop();
-        enterAnim.start();
+        morphOut.stop();
+        root.exiting = false;
+        morphIn.start();
         root.forceActiveFocus();
     }
 
     function close(): void {
-        enterAnim.stop();
-        exitAnim.start();
+        if (root.exiting)
+            return;
+        root.exiting = true;
+        morphIn.stop();
+        morphOut.start();
     }
 
+    // The one and only morph driver. Entry: fast continuous expansion;
+    // exit: quick shrink, then the shell hides the window.
     NumberAnimation {
-        id: enterAnim
+        id: morphIn
         target: root
         property: "progress"
         from: 0
         to: 1
-        duration: 450
+        duration: 650
         easing.type: Easing.OutExpo
     }
     NumberAnimation {
-        id: exitAnim
+        id: morphOut
         target: root
         property: "progress"
         to: 0
-        duration: 180
+        duration: 220
         easing.type: Easing.InCubic
-        onFinished: root.hideRequested()
+        onFinished: {
+            root.exiting = false;
+            root.hideRequested();
+        }
     }
 
     Keys.onPressed: function(event) {
@@ -74,10 +89,46 @@ Rectangle {
         onClicked: {}
     }
 
+    // ---- morph start: bare pulsing dot, dissolves as expansion begins ----
+    // Outer fades with progress; inner runs the pulse loop so the two
+    // opacity drivers never fight over one property.
+    Item {
+        anchors.centerIn: parent
+        width: 8
+        height: 8
+        opacity: 1 - Math.min(1, root.progress * 4)
+        visible: opacity > 0
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 4
+            color: Theme.notifAccent
+
+            SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                running: root.progress < 0.3
+                NumberAnimation {
+                    to: 0.3
+                    duration: 900
+                    easing.type: Easing.InOutQuad
+                }
+                NumberAnimation {
+                    to: 1
+                    duration: 900
+                    easing.type: Easing.InOutQuad
+                }
+            }
+        }
+    }
+
     Column {
+        id: cardView
         anchors.fill: parent
         anchors.margins: Theme.notifPadding
         spacing: 8
+        opacity: root.contentOpacity
+        enabled: root.progress > 0.85
+        visible: opacity > 0
 
         // Header
         Item {

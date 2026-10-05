@@ -167,4 +167,6 @@ QtObject {
     property int notifTimeoutMs: 6000
     property int centerWidth: 400
     property int centerHeight: 520
+    // Dot the center morphs from — same language as the island dot.
+    property int centerDot: 48
 }
