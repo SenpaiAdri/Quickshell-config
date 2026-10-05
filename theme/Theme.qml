@@ -43,6 +43,7 @@ QtObject {
     property int labelSize: 13
 
     // --- wifi menu ---
+    property int wifiDot: 48
     property int wifiWidth: 400
     property int wifiHeight: 460
     property int wifiTopMargin: 28

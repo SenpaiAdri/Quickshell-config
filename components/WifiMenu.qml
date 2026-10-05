@@ -1,5 +1,7 @@
 // Wi-Fi menu panel: toggle, live network list (nmcli), inline password connect.
-// Exposes refresh() so the shell can reload on open; emits hideRequested on success.
+// Lives in a fullscreen transparent PanelWindow (see shell.qml wifiWin).
+// open() runs one continuous dot→card morph; close() shrinks it back and
+// emits hideRequested so the shell can hide the window.
 import QtQuick
 import Quickshell.Io
 
@@ -8,9 +10,14 @@ import "../theme"
 Rectangle {
     id: root
     color: Theme.wifiBg
-    radius: Theme.wifiRadius
+    // Single continuous morph, same language as the island/center: every
+    // dimension is a function of `progress` (0 dot → 1 full card), driven
+    // by exactly one animation. Radius blends from a perfect circle into
+    // the card corner — no staged retargets.
+    radius: (1 - root.progress) * Math.min(root.width, root.height) / 2 + root.progress * Theme.wifiRadius
     border.color: Theme.wifiBorder
     border.width: 1
+    clip: true
 
     property bool wifiEnabled: true
     property bool busy: false
@@ -26,7 +33,96 @@ Rectangle {
     // -16 in the list height keeps slack so the fixed window never clips.
     property int footerH: 40 + 4 + 40 + (hiddenExpanded ? 4 + 144 : 0)
 
+    // 0 = dot, 1 = full card. Animated once per open (OutExpo: fast
+    // expansion, soft landing — the Dynamic Island feel).
+    property real progress: 0
+    property bool exiting: false
+
+    readonly property real frameW: Theme.wifiDot + (Theme.wifiWidth - Theme.wifiDot) * root.progress
+    readonly property real frameH: Theme.wifiDot + (Theme.wifiHeight - Theme.wifiDot) * root.progress
+    // Contents fade in over the final stretch of the morph only.
+    readonly property real contentOpacity: Math.min(1, Math.max(0, (root.progress - 0.8) / 0.2))
+
     signal hideRequested()
+
+    function open(): void {
+        morphOut.stop();
+        root.exiting = false;
+        refresh();
+        morphIn.start();
+    }
+
+    function close(): void {
+        if (root.exiting)
+            return;
+        root.exiting = true;
+        morphIn.stop();
+        morphOut.start();
+    }
+
+    // The one and only morph driver. Entry: fast continuous expansion;
+    // exit: quick shrink, then the shell hides the window.
+    NumberAnimation {
+        id: morphIn
+        target: root
+        property: "progress"
+        from: 0
+        to: 1
+        duration: 650
+        easing.type: Easing.OutExpo
+    }
+    NumberAnimation {
+        id: morphOut
+        target: root
+        property: "progress"
+        to: 0
+        duration: 220
+        easing.type: Easing.InCubic
+        onFinished: {
+            root.exiting = false;
+            root.hideRequested();
+        }
+    }
+
+    // Swallow clicks on the card so the fullscreen backdrop behind it
+    // (which dismisses on outside-click) never fires from inside.
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: {}
+    }
+
+    // ---- morph start: bare pulsing dot, dissolves as expansion begins ----
+    // Outer fades with progress; inner runs the pulse loop so the two
+    // opacity drivers never fight over one property.
+    Item {
+        anchors.centerIn: parent
+        width: 8
+        height: 8
+        opacity: 1 - Math.min(1, root.progress * 4)
+        visible: opacity > 0
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 4
+            color: Theme.wifiAccent
+
+            SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                running: root.progress < 0.3
+                NumberAnimation {
+                    to: 0.3
+                    duration: 900
+                    easing.type: Easing.InOutQuad
+                }
+                NumberAnimation {
+                    to: 1
+                    duration: 900
+                    easing.type: Easing.InOutQuad
+                }
+            }
+        }
+    }
 
     ListModel {
         id: networks
@@ -142,7 +238,7 @@ Rectangle {
     Timer {
         id: hideSoon
         interval: 1800
-        onTriggered: root.hideRequested()
+        onTriggered: root.close()
     }
     Timer {
         id: rescanWait
@@ -303,6 +399,9 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: Theme.wifiPadding
         spacing: 4
+        opacity: root.contentOpacity
+        enabled: root.progress > 0.85
+        visible: opacity > 0
 
         // Header: title + status + toggle + close
         Item {
@@ -358,7 +457,7 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     anchors.margins: -8
-                    onClicked: root.hideRequested()
+                    onClicked: root.close()
                 }
             }
         }

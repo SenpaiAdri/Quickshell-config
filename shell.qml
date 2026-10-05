@@ -72,25 +72,21 @@ ShellRoot {
         id: wifiWin
         anchors {
             top: true
+            bottom: true
+            left: true
             right: true
         }
-        margins {
-            top: Theme.wifiTopMargin
-            right: Theme.wifiRightMargin
-        }
-        implicitWidth: Theme.wifiWidth
-        implicitHeight: Theme.wifiHeight
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
         focusable: true
         visible: false
         color: "transparent"
 
-        // On-demand keyboard focus: keys work once the menu is clicked;
-        // (Exclusive broke outside-click dismissal, so it stays off.)
+        // On-demand keyboard focus (Esc close); outside-click dismissal
+        // via focus grab, like the island and notification center.
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
-        Keys.onEscapePressed: wifiWin.visible = false
+        Keys.onEscapePressed: wifiMenu.close()
 
         // Modal popup behavior: keep keyboard focus while open (Esc + typing
         // work immediately), auto-dismiss when anything outside is clicked.
@@ -98,28 +94,42 @@ ShellRoot {
             id: grab
             windows: [wifiWin]
             active: wifiWin.visible
-            onCleared: wifiWin.visible = false
+            onCleared: wifiMenu.close()
         }
 
         IpcHandler {
             target: "wifi"
             function toggle(): void {
-                wifiWin.visible = !wifiWin.visible;
                 if (wifiWin.visible)
-                    wifiMenu.refresh();
+                    wifiMenu.close();
+                else {
+                    wifiWin.visible = true;
+                    wifiMenu.open();
+                }
             }
             function show(): void {
                 wifiWin.visible = true;
-                wifiMenu.refresh();
+                wifiMenu.open();
             }
             function hide(): void {
-                wifiWin.visible = false;
+                wifiMenu.close();
             }
+        }
+
+        // Backdrop — click outside shrinks the menu away
+        MouseArea {
+            anchors.fill: parent
+            onClicked: wifiMenu.close()
         }
 
         WifiMenu {
             id: wifiMenu
-            anchors.fill: parent
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: Theme.wifiTopMargin
+            anchors.rightMargin: Theme.wifiRightMargin
+            width: wifiMenu.frameW
+            height: wifiMenu.frameH
             onHideRequested: wifiWin.visible = false
         }
     }
