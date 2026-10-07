@@ -265,9 +265,12 @@ Rectangle {
             clip: true
             spacing: 12
             displaced: Transition {
+                // Short: followers ride an expanding stack's height
+                // frame-synchronously instead of trailing it. Still long
+                // enough to glide on insert/remove jumps.
                 NumberAnimation {
                     properties: "y"
-                    duration: 350
+                    duration: 150
                     easing.type: Easing.OutCubic
                 }
             }
@@ -280,13 +283,12 @@ Rectangle {
                 required property var modelData
                 required property int index
                 width: ListView.view.width
-                height: cardsCol.implicitHeight + (isStack ? (gflats.length > 2 ? 14 : 7) : 0)
-                Behavior on height {
-                    NumberAnimation {
-                        duration: 380
-                        easing.type: Easing.OutCubic
-                    }
-                }
+                height: cardsCol.implicitHeight + groupRoot.peekExtra
+                // No Behavior here: the wrapper heights below already
+                // animate, so this tracks the fan frame-synchronously.
+                // A Behavior would chase the moving target (double lag)
+                // and let expanding cards paint past the lagging delegate
+                // bounds over the follower below.
 
                 readonly property string gkey: modelData.key
                 readonly property string gapp: modelData.app
@@ -294,37 +296,37 @@ Rectangle {
                 readonly property bool gopen: !!root.expandedGroups[modelData.key]
                 readonly property bool isStack: gflats.length > 1 && !gopen
                 readonly property bool showHeader: gflats.length > 1 && gopen
-                readonly property real firstH: (cardsRep.count > 0 && cardsRep.itemAt(0)) ? cardsRep.itemAt(0).height : 0
+                // Fan followers: the peek strips ARE cards 2 and 3 unfolding.
+                // Each tracks its card wrapper's expand ratio (0 tucked → 1
+                // fanned) plus that card's live slot and height, so the strip
+                // glides from behind the top card into its notification's
+                // place instead of crossfading away. Pure followers — the
+                // wrappers drive, so no Behaviors here and no feedback loops
+                // (nothing below feeds back into the Column layout).
+                readonly property real kFar: (cardsRep.count > 2 && cardsRep.itemAt(2)) ? cardsRep.itemAt(2).expandRatio : 0
+                readonly property real kNear: (cardsRep.count > 1 && cardsRep.itemAt(1)) ? cardsRep.itemAt(1).expandRatio : 0
+                readonly property real slotFar: (cardsRep.count > 2 && cardsRep.itemAt(2)) ? cardsRep.itemAt(2).y + cardsRep.itemAt(2).gapAbove : 0
+                readonly property real slotNear: (cardsRep.count > 1 && cardsRep.itemAt(1)) ? cardsRep.itemAt(1).y + cardsRep.itemAt(1).gapAbove : 0
+                readonly property real cardFarH: (cardsRep.count > 2 && cardsRep.itemAt(2)) ? cardsRep.itemAt(2).cardH : 0
+                readonly property real cardNearH: (cardsRep.count > 1 && cardsRep.itemAt(1)) ? cardsRep.itemAt(1).cardH : 0
+                // Tucked overhang below the top card; shrinks to zero as the
+                // cards take their slots.
+                readonly property real peekExtra: gflats.length > 2 ? 14 * (1 - groupRoot.kFar) : (gflats.length > 1 ? 7 * (1 - groupRoot.kNear) : 0)
 
                 // Peek cards tucked behind the top card (painted first =
-                // bottom). Each is a full card-sized layer nudged down, so
-                // only a rounded strip shows below the top card — never a
-                // floating sliver poking past the card's corners.
-                // Solid fills: the top card below is opaque, and translucent
-                // peeks would ghost through it — same for the rows.
-                // Opacity-driven (not visible-toggled) so they crossfade
-                // against the fan-out: fast out on expand, delayed in on
-                // collapse so cards tuck first.
+                // bottom). Full card-sized layers nudged down, so only a
+                // rounded strip shows below the top card — never a floating
+                // sliver poking past the card's corners.
+                // Solid fills: the top card is opaque, and translucent peeks
+                // would ghost through it — same for the rows.
                 Rectangle {
                     id: peekFar
-                    readonly property bool shouldShow: groupRoot.isStack && groupRoot.gflats.length > 2
-                    opacity: peekFar.shouldShow ? 1 : 0
-                    visible: opacity > 0.01
-                    Behavior on opacity {
-                        SequentialAnimation {
-                            PauseAnimation {
-                                duration: peekFar.shouldShow ? 150 : 0
-                            }
-                            NumberAnimation {
-                                duration: 250
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-                    }
+                    visible: groupRoot.gflats.length > 2 && opacity > 0.01
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: 14
-                    width: parent.width - 32
-                    height: groupRoot.firstH
+                    y: 14 * (1 - groupRoot.kFar) + groupRoot.slotFar * groupRoot.kFar
+                    width: parent.width - 32 * (1 - groupRoot.kFar)
+                    height: groupRoot.cardFarH
+                    opacity: 1 - groupRoot.kFar
                     radius: 12
                     color: "#202020"
                     border.color: Theme.notifBorder
@@ -332,24 +334,12 @@ Rectangle {
                 }
                 Rectangle {
                     id: peekNear
-                    readonly property bool shouldShow: groupRoot.isStack
-                    opacity: peekNear.shouldShow ? 1 : 0
-                    visible: opacity > 0.01
-                    Behavior on opacity {
-                        SequentialAnimation {
-                            PauseAnimation {
-                                duration: peekNear.shouldShow ? 150 : 0
-                            }
-                            NumberAnimation {
-                                duration: 250
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-                    }
+                    visible: groupRoot.gflats.length > 1 && opacity > 0.01
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: 7
-                    width: parent.width - 16
-                    height: groupRoot.firstH
+                    y: 7 * (1 - groupRoot.kNear) + groupRoot.slotNear * groupRoot.kNear
+                    width: parent.width - 16 * (1 - groupRoot.kNear)
+                    height: groupRoot.cardNearH
+                    opacity: 1 - groupRoot.kNear
                     radius: 12
                     color: "#202020"
                     border.color: Theme.notifBorder
@@ -462,6 +452,11 @@ Rectangle {
                             readonly property bool hidden: groupRoot.isStack && index > 0
                             readonly property int gapAbove: isFirst ? 0 : 8
                             readonly property int fanDelay: hidden ? (cardsRep.count - 1 - index) * 35 : index * 35
+                            // Live unfold state for the peek followers above:
+                            // card content height (stable) and 0-tucked →
+                            // 1-fanned ratio of this wrapper.
+                            readonly property real cardH: cardRect.height
+                            readonly property real expandRatio: height / Math.max(1, cardH + gapAbove)
                             width: groupRoot.width
                             height: cardWrap.hidden ? 0 : cardRect.height + cardWrap.gapAbove
                             opacity: cardWrap.hidden ? 0 : 1
