@@ -264,6 +264,13 @@ Rectangle {
             visible: root.history.length > 0
             clip: true
             spacing: 12
+            displaced: Transition {
+                NumberAnimation {
+                    properties: "y"
+                    duration: 350
+                    easing.type: Easing.OutCubic
+                }
+            }
             model: root.groups
             // One group per app: singles render exactly like before; multi
             // stacks show the latest card with older cards peeking behind
@@ -274,13 +281,18 @@ Rectangle {
                 required property int index
                 width: ListView.view.width
                 height: cardsCol.implicitHeight + (isStack ? (gflats.length > 2 ? 14 : 7) : 0)
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 380
+                        easing.type: Easing.OutCubic
+                    }
+                }
 
                 readonly property string gkey: modelData.key
                 readonly property string gapp: modelData.app
                 readonly property var gflats: modelData.items
                 readonly property bool gopen: !!root.expandedGroups[modelData.key]
                 readonly property bool isStack: gflats.length > 1 && !gopen
-                readonly property var visFlats: isStack ? [gflats[0]] : gflats
                 readonly property bool showHeader: gflats.length > 1 && gopen
                 readonly property real firstH: (cardsRep.count > 0 && cardsRep.itemAt(0)) ? cardsRep.itemAt(0).height : 0
 
@@ -290,8 +302,25 @@ Rectangle {
                 // floating sliver poking past the card's corners.
                 // Solid fills: the top card below is opaque, and translucent
                 // peeks would ghost through it — same for the rows.
+                // Opacity-driven (not visible-toggled) so they crossfade
+                // against the fan-out: fast out on expand, delayed in on
+                // collapse so cards tuck first.
                 Rectangle {
-                    visible: groupRoot.isStack && groupRoot.gflats.length > 2
+                    id: peekFar
+                    readonly property bool shouldShow: groupRoot.isStack && groupRoot.gflats.length > 2
+                    opacity: peekFar.shouldShow ? 1 : 0
+                    visible: opacity > 0.01
+                    Behavior on opacity {
+                        SequentialAnimation {
+                            PauseAnimation {
+                                duration: peekFar.shouldShow ? 150 : 0
+                            }
+                            NumberAnimation {
+                                duration: 250
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: 14
                     width: parent.width - 32
@@ -302,7 +331,21 @@ Rectangle {
                     border.width: 1
                 }
                 Rectangle {
-                    visible: groupRoot.isStack
+                    id: peekNear
+                    readonly property bool shouldShow: groupRoot.isStack
+                    opacity: peekNear.shouldShow ? 1 : 0
+                    visible: opacity > 0.01
+                    Behavior on opacity {
+                        SequentialAnimation {
+                            PauseAnimation {
+                                duration: peekNear.shouldShow ? 150 : 0
+                            }
+                            NumberAnimation {
+                                duration: 250
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: 7
                     width: parent.width - 16
@@ -313,16 +356,43 @@ Rectangle {
                     border.width: 1
                 }
 
+                // Gaps live inside each wrapper's height (not Column
+                // spacing) so the 8px gaps fan with the cards instead of
+                // snapping.
                 Column {
                     id: cardsCol
                     width: parent.width
-                    spacing: groupRoot.showHeader ? 8 : 0
+                    spacing: 0
 
                     // Expanded group header: app + count, collapse, drop all.
-                    Rectangle {
-                        visible: groupRoot.showHeader
+                    // Wrapper carries the 8px gap below the header in its
+                    // height. Leads on expand, trails the cards on collapse.
+                    Item {
                         width: parent.width
-                        height: visible ? 28 : 0
+                        height: groupRoot.showHeader ? 36 : 0
+                        opacity: groupRoot.showHeader ? 1 : 0
+                        visible: groupRoot.showHeader ? true : (height > 0.5 || opacity > 0.01)
+                        clip: true
+                        Behavior on height {
+                            SequentialAnimation {
+                                PauseAnimation {
+                                    duration: groupRoot.showHeader ? 0 : groupRoot.gflats.length * 35
+                                }
+                                NumberAnimation {
+                                    duration: 320
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: 250
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    Rectangle {
+                        width: parent.width
+                        height: 28
                         radius: 12
                         color: "transparent"
                         Item {
@@ -371,15 +441,58 @@ Rectangle {
                                 }
                             }
                         }
+                        }
                     }
 
                     Repeater {
                         id: cardsRep
-                        model: groupRoot.visFlats
-                        delegate: Rectangle {
+                        model: groupRoot.gflats
+                        // Wrapper carries the 8px gap above the card in its
+                        // height so gaps fan with the cards. All flats stay
+                        // instantiated — i > 0 collapse to height 0 instead
+                        // of being destroyed — so both directions animate.
+                        // Expand cascades top-down, collapse tucks
+                        // bottom-first.
+                        delegate: Item {
+                            id: cardWrap
                             required property int modelData
+                            required property int index
                             readonly property int flat: modelData
-                            readonly property var h: (flat >= 0 && flat < root.history.length) ? root.history[flat] : null
+                            readonly property bool isFirst: index === 0
+                            readonly property bool hidden: groupRoot.isStack && index > 0
+                            readonly property int gapAbove: isFirst ? 0 : 8
+                            readonly property int fanDelay: hidden ? (cardsRep.count - 1 - index) * 35 : index * 35
+                            width: groupRoot.width
+                            height: cardWrap.hidden ? 0 : cardRect.height + cardWrap.gapAbove
+                            opacity: cardWrap.hidden ? 0 : 1
+                            visible: !cardWrap.hidden || height > 0.5 || opacity > 0.01
+                            clip: true
+                            Behavior on height {
+                                SequentialAnimation {
+                                    PauseAnimation {
+                                        duration: cardWrap.fanDelay
+                                    }
+                                    NumberAnimation {
+                                        duration: 340
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                            }
+                            Behavior on opacity {
+                                SequentialAnimation {
+                                    PauseAnimation {
+                                        duration: cardWrap.fanDelay
+                                    }
+                                    NumberAnimation {
+                                        duration: 260
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                            }
+                        Rectangle {
+                            id: cardRect
+                            y: cardWrap.gapAbove
+                            readonly property var h: (cardWrap.flat >= 0 && cardWrap.flat < root.history.length) ? root.history[cardWrap.flat] : null
                             readonly property string app: h ? (h.app || "Notification") : "Notification"
                             readonly property string summary: h ? h.summary : ""
                             readonly property string body: h ? h.body : ""
@@ -410,9 +523,9 @@ Rectangle {
                                 id: delHover
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                onPressed: notifState.log("row press flat=" + flat)
+                                onPressed: notifState.log("row press flat=" + cardWrap.flat)
                                 onClicked: {
-                                    if (stackTop)
+                                    if (cardRect.stackTop)
                                         root.toggleGroup(groupRoot.gkey);
                                 }
                             }
@@ -434,19 +547,19 @@ Rectangle {
                         radius: 8
                         color: "transparent"
                         clip: true
-                        visible: imgSrc !== "" && itemImg.status !== Image.Error
+                        visible: cardRect.imgSrc !== "" && itemImg.status !== Image.Error
 
                         Image {
                             id: itemImg
                             anchors.fill: parent
-                            source: imgSrc
+                            source: cardRect.imgSrc
                             asynchronous: true
                             fillMode: Image.PreserveAspectCrop
                         }
                     }
 
                     Column {
-                        width: parent.width - (imgSrc !== "" ? 44 : 0)
+                        width: parent.width - (cardRect.imgSrc !== "" ? 44 : 0)
                         spacing: 10
 
                     // Header: app + count + stamp + close on one baseline.
@@ -458,16 +571,16 @@ Rectangle {
                         Text {
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 40 - 16 - 12 - (stackTop ? 30 : 0)
+                            width: parent.width - 40 - 16 - 12 - (cardRect.stackTop ? 30 : 0)
                             elide: Text.ElideRight
-                            text: app.toUpperCase()
+                            text: cardRect.app.toUpperCase()
                             color: Theme.notifDim
                             font.family: Theme.notifFont
                             font.pixelSize: Theme.notifSmallSize
                             font.bold: true
                         }
                         Rectangle {
-                            visible: stackTop
+                            visible: cardRect.stackTop
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.right: stampText.left
                             anchors.rightMargin: 6
@@ -491,7 +604,7 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             width: 40
                             horizontalAlignment: Text.AlignRight
-                            text: stamp
+                            text: cardRect.stamp
                             color: "#66ffffff"
                             font.family: Theme.notifFont
                             font.pixelSize: Theme.notifSmallSize
@@ -511,12 +624,12 @@ Rectangle {
                                 anchors.fill: parent
                                 anchors.margins: -8
                                 hoverEnabled: true
-                                onPressed: notifState.log("x press flat=" + flat)
+                                onPressed: notifState.log("x press flat=" + cardWrap.flat)
                                 onClicked: {
-                                    if (stackTop)
+                                    if (cardRect.stackTop)
                                         root.removeGroupRequested(groupRoot.gkey);
                                     else
-                                        root.removeRequested(flat);
+                                        root.removeRequested(cardWrap.flat);
                                 }
                             }
                         }
@@ -527,7 +640,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         maximumLineCount: 2
                         elide: Text.ElideRight
-                        text: summary
+                        text: cardRect.summary
                         color: Theme.notifText
                         font.family: Theme.notifFont
                         font.pixelSize: Theme.notifTitleSize
@@ -539,13 +652,14 @@ Rectangle {
                         wrapMode: Text.Wrap
                         maximumLineCount: 3
                         elide: Text.ElideRight
-                        text: body
+                        text: cardRect.body
                         color: Theme.notifDim
                         font.family: Theme.notifFont
                         font.pixelSize: Theme.notifBodySize
                     }
                     }
                 }
+                        }
                         }
                     }
                 }
