@@ -66,13 +66,14 @@ QtObject {
     property color wifiAccent: "#ececec"
 
     // --- wallpaper filmstrip picker ---
+    property int wallDot: 10
     property int wallWidth: 700
-    property int wallHeight: 236
-    property int wallBottomMargin: 90
-    property int wallRadius: 18
+    property int wallHeight: 220
+    property int wallTopMargin: 28
+    property int wallRadius: 22
     property color wallBg: "#e6141414"
     property color wallBorder: "#26ffffff"
-    property int wallPadding: 20
+    property int wallPadding: 10
     property int wallSpacing: 18
     property int wallThumbW: 200
     property int wallThumbH: 120

@@ -137,37 +137,40 @@ ShellRoot {
     PanelWindow {
         id: wallWin
         anchors {
+            top: true
             bottom: true
+            left: true
+            right: true
         }
-        margins {
-            bottom: Theme.wallBottomMargin
-        }
-        implicitWidth: Theme.wallWidth
-        implicitHeight: Theme.wallHeight
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
         focusable: true
         visible: false
         color: "transparent"
 
-        // On-demand keyboard focus: keys work once the menu is clicked;
-        // (Exclusive broke outside-click dismissal, so it stays off.)
+        // On-demand keyboard focus (Esc close); outside-click dismissal
+        // via focus grab, like the island and notification center.
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+        Keys.onEscapePressed: wallMenu.close()
 
         // Modal popup behavior: keep keyboard focus while open (Esc + typing
         // work immediately), auto-dismiss when anything outside is clicked.
         HyprlandFocusGrab {
             windows: [wallWin]
             active: wallWin.visible
-            onCleared: wallWin.visible = false
+            onCleared: wallMenu.close()
         }
 
         IpcHandler {
             target: "wallpaper"
             function toggle(): void {
-                wallWin.visible = !wallWin.visible;
                 if (wallWin.visible)
+                    wallMenu.close();
+                else {
+                    wallWin.visible = true;
                     wallMenu.open();
+                }
             }
             function show(): void {
                 wallWin.visible = true;
@@ -178,13 +181,23 @@ ShellRoot {
                 wallMenu.open();
             }
             function hide(): void {
-                wallWin.visible = false;
+                wallMenu.close();
             }
+        }
+
+        // Backdrop — click outside shrinks the picker away
+        MouseArea {
+            anchors.fill: parent
+            onClicked: wallMenu.close()
         }
 
         WallpaperPicker {
             id: wallMenu
-            anchors.fill: parent
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Theme.wallTopMargin
+            width: wallMenu.frameW
+            height: wallMenu.frameH
             onHideRequested: wallWin.visible = false
         }
     }
