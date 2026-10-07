@@ -88,6 +88,21 @@ Read this before touching island/center/wifi animations or verifying them visual
   below — the exact pre-fix spill scenario; mid-fan shows follower displaced
   in sync, zero overlap). Verdict: fan works correctly both directions.
 
+## Notification center `mpris` player card (2026-10-07)
+
+- Swaync had `mpris` widget; quickshell center only had `NotificationServer`
+  history, so Spotify never appeared. Fixed in `components/NotifCenter.qml`:
+  `import Quickshell.Services.Mpris`, `Mpris.players.values` singleton,
+  `activePlayer` = playing first, else first with a title. Card collapses to
+  height 0 when no track; `ListView.height` reclaims the space conditionally.
+- Card: 96px, art 72px (`trackArtUrl`, remote https works, `asynchronous`),
+  identity + PLAYING/PAUSED + title + artist — album, transport
+  ⏮ ▶/⏸ ⏭ calling `previous()` / `togglePlaying()` / `next()` guarded by
+  `canGoPrevious` / `canGoNext`. Spotify controls verified live by click
+  (pause → `playerctl status` Paused; resume via `playerctl play` after a
+  stray click closed the center — mouse was live, not a code miss).
+- Measured (1920x1200): pause glyph ≈ screen (1845, 134).
+
 ## Current fan implementation (`components/NotifCenter.qml`)
 
 - All cards always instantiated; collapsed = height 0 + opacity 0 (not

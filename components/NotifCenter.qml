@@ -2,6 +2,7 @@
 // Pure view: history list + dnd flag come via props from shell.qml.
 pragma ComponentBehavior: Bound
 import QtQuick
+import Quickshell.Services.Mpris
 
 import "../theme"
 
@@ -29,6 +30,26 @@ Rectangle {
     signal removeRequested(int index)
     signal removeGroupRequested(string appKey)
     signal dndToggled()
+
+    // Active media player (swaync `mpris` widget parity): prefer the
+    // playing player, else the first one advertising a track. Null when
+    // nothing is available — the card below collapses to height 0.
+    readonly property var mprisPlayers: Mpris.players.values
+    readonly property var activePlayer: {
+        var ps = root.mprisPlayers;
+        var fallback = null;
+        for (var i = 0; i < ps.length; i++) {
+            var p = ps[i];
+            if (!p)
+                continue;
+            if (p.isPlaying)
+                return p;
+            if (fallback === null && p.trackTitle !== "")
+                fallback = p;
+        }
+        return fallback !== null ? fallback : (ps.length > 0 ? ps[0] : null);
+    }
+    readonly property bool hasMedia: root.activePlayer !== null && root.activePlayer.trackTitle !== ""
 
     // App-grouped view of history: newest group first, newest item first
     // within each group. Expanded/collapsed state lives here (keyed by
@@ -246,6 +267,162 @@ Rectangle {
             color: Theme.notifDivider
         }
 
+        // ---- now-playing (swaync `mpris` parity) ----
+        // Full player card: album art + title/artist + transport controls.
+        // Collapses to height 0 when no player advertises a track, and the
+        // list below reclaims the space via mediaWrap.height.
+        Item {
+            id: mediaWrap
+            width: parent.width
+            height: root.hasMedia ? 96 : 0
+            visible: height > 0.5 || mediaCard.opacity > 0.01
+            clip: true
+            Behavior on height {
+                NumberAnimation {
+                    duration: 250
+                    easing.type: Easing.OutCubic
+                }
+            }
+
+            Rectangle {
+                id: mediaCard
+                width: parent.width
+                // Fixed card height; the wrapper animates 0 <-> card.
+                height: 96
+                radius: 12
+                color: "#202020"
+                border.color: Theme.notifBorder
+                border.width: 1
+                clip: true
+                opacity: root.hasMedia ? 1 : 0
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 250
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 12
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 72
+                        height: 72
+                        radius: 8
+                        color: "#141414"
+                        clip: true
+                        visible: root.hasMedia
+
+                        Image {
+                            anchors.fill: parent
+                            source: root.hasMedia ? (root.activePlayer.trackArtUrl || "") : ""
+                            asynchronous: true
+                            fillMode: Image.PreserveAspectCrop
+                            visible: status !== Image.Error && status !== Image.Null
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: !root.hasMedia || (root.activePlayer && (root.activePlayer.trackArtUrl || "") === "")
+                            text: "♪"
+                            color: Theme.notifDim
+                            font.pixelSize: 28
+                        }
+                    }
+
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 72 - 12 - 96
+                        spacing: 2
+
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: root.hasMedia ? (root.activePlayer.identity || "Music").toUpperCase() + (root.activePlayer.isPlaying ? "  ·  PLAYING" : "  ·  PAUSED") : ""
+                            color: Theme.notifDim
+                            font.family: Theme.notifFont
+                            font.pixelSize: Theme.notifSmallSize
+                            font.bold: true
+                        }
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: root.hasMedia ? root.activePlayer.trackTitle : ""
+                            color: Theme.notifText
+                            font.family: Theme.notifFont
+                            font.pixelSize: Theme.notifTitleSize
+                            font.bold: true
+                        }
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            text: root.hasMedia ? ([root.activePlayer.trackArtist, root.activePlayer.trackAlbum].filter(function(s) {
+                                return s !== "";
+                            }).join(" — ")) : ""
+                            color: Theme.notifDim
+                            font.family: Theme.notifFont
+                            font.pixelSize: Theme.notifBodySize
+                        }
+                    }
+
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 96
+                        spacing: 4
+
+                        Item {
+                            width: 28
+                            height: 40
+                            Text {
+                                anchors.centerIn: parent
+                                text: "⏮"
+                                color: (root.hasMedia && root.activePlayer.canGoPrevious) ? Theme.notifText : Theme.notifLow
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: root.hasMedia && root.activePlayer.canGoPrevious
+                                onClicked: root.activePlayer.previous()
+                            }
+                        }
+                        Item {
+                            width: 32
+                            height: 40
+                            Text {
+                                anchors.centerIn: parent
+                                text: (root.hasMedia && root.activePlayer.isPlaying) ? "⏸" : "▶"
+                                color: Theme.notifText
+                                font.pixelSize: 20
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: root.hasMedia
+                                onClicked: root.activePlayer.togglePlaying()
+                            }
+                        }
+                        Item {
+                            width: 28
+                            height: 40
+                            Text {
+                                anchors.centerIn: parent
+                                text: "⏭"
+                                color: (root.hasMedia && root.activePlayer.canGoNext) ? Theme.notifText : Theme.notifLow
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: root.hasMedia && root.activePlayer.canGoNext
+                                onClicked: root.activePlayer.next()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Empty state
         Text {
             width: parent.width
@@ -260,7 +437,9 @@ Rectangle {
 
         ListView {
             width: parent.width
-            height: parent.height - 30 - 1 - 16
+            // Header (30) + divider (1) + column gaps. With media visible the
+            // column holds 4 items (3 gaps = 24); without, 3 items (2 gaps).
+            height: parent.height - 30 - 1 - mediaWrap.height - (root.hasMedia ? 24 : 16)
             visible: root.history.length > 0
             clip: true
             spacing: 12
