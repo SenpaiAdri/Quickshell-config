@@ -81,7 +81,7 @@ Rectangle {
         if (key === "lock")
             Quickshell.execDetached(["hyprlock"]);
         else if (key === "logout")
-            Quickshell.execDetached(["hyprctl", "dispatch", "exit"]);
+            Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.exit()"]);
         else if (key === "suspend")
             Quickshell.execDetached(["bash", "-c", "hyprlock & sleep 0.5 && systemctl suspend"]);
         else if (key === "reboot")
