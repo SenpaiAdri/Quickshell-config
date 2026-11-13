@@ -1,12 +1,11 @@
-// Shell entry — OSD toast + Wi-Fi menu.
-// Triggered via: quickshell ipc call osd popup <...> | quickshell ipc call wifi toggle
-// Window chrome + IPC live here; visuals live in components/ (tuned via theme/).
+// Desktop shell and Waybar IPC endpoints.
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Services.Notifications
 import QtQuick
+import QtCore
 
 import "components"
 import "theme"
@@ -65,72 +64,6 @@ ShellRoot {
             kind: osd.kind
             level: osd.level
             muted: osd.muted
-        }
-    }
-
-    PanelWindow {
-        id: wifiWin
-        anchors {
-            top: true
-            bottom: true
-            left: true
-            right: true
-        }
-        exclusionMode: ExclusionMode.Ignore
-        aboveWindows: true
-        focusable: true
-        visible: false
-        color: "transparent"
-
-        // On-demand keyboard focus (Esc close); outside-click dismissal
-        // via focus grab, like the island and notification center.
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
-
-        Keys.onEscapePressed: wifiMenu.close()
-
-        // Modal popup behavior: keep keyboard focus while open (Esc + typing
-        // work immediately), auto-dismiss when anything outside is clicked.
-        HyprlandFocusGrab {
-            id: grab
-            windows: [wifiWin]
-            active: wifiWin.visible
-            onCleared: wifiMenu.close()
-        }
-
-        IpcHandler {
-            target: "wifi"
-            function toggle(): void {
-                if (wifiWin.visible)
-                    wifiMenu.close();
-                else {
-                    wifiWin.visible = true;
-                    wifiMenu.open();
-                }
-            }
-            function show(): void {
-                wifiWin.visible = true;
-                wifiMenu.open();
-            }
-            function hide(): void {
-                wifiMenu.close();
-            }
-        }
-
-        // Backdrop — click outside shrinks the menu away
-        MouseArea {
-            anchors.fill: parent
-            onClicked: wifiMenu.close()
-        }
-
-        WifiMenu {
-            id: wifiMenu
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: Theme.wifiTopMargin
-            anchors.rightMargin: Theme.wifiRightMargin
-            width: wifiMenu.frameW
-            height: wifiMenu.frameH
-            onHideRequested: wifiWin.visible = false
         }
     }
 
@@ -339,76 +272,20 @@ ShellRoot {
         }
     }
 
-    PanelWindow {
-        id: islandWin
-        anchors {
-            top: true
-            bottom: true
-            left: true
-            right: true
-        }
-        exclusionMode: ExclusionMode.Ignore
-        aboveWindows: true
-        focusable: true
-        visible: false
-        color: "transparent"
-
-        // On-demand keyboard focus (month ←/→, T today, Esc close);
-        // outside-click dismissal via focus grab, like the wifi menu.
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
-
-        Keys.onEscapePressed: island.close()
-
-        HyprlandFocusGrab {
-            windows: [islandWin]
-            active: islandWin.visible
-            onCleared: island.close()
-        }
-
-        IpcHandler {
-            target: "island"
-            function toggle(): void {
-                if (islandWin.visible) {
-                    islandWin.visible = false;
-                } else {
-                    islandWin.visible = true;
-                    island.open();
-                }
-            }
-            function show(): void {
-                islandWin.visible = true;
-                island.open();
-            }
-            function hide(): void {
-                islandWin.visible = false;
-            }
-        }
-
-        // Backdrop — click outside shrinks the island away
-        MouseArea {
-            anchors.fill: parent
-            onClicked: island.close()
-        }
-
-        IslandClock {
-            id: island
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: Theme.islandTopMargin
-            width: island.frameW
-            height: island.frameH
-            onHideRequested: islandWin.visible = false
-        }
-    }
-
     // ---- notifications: server + toast stack + history center ----
     // State lives here; arrays are always reassigned (never mutated in
     // place) so bindings and Repeaters update.
+    Settings {
+        id: preferences
+        location: "file://" + Quickshell.stateDir + "/controls.ini"
+        property bool doNotDisturb: false
+    }
+
     QtObject {
         id: notifState
         property var history: []
-        property int unread: 0
-        property bool dnd: false
+        readonly property int unread: history.filter(h => h.unread).length
+        readonly property bool dnd: preferences.doNotDisturb
         property var dbg: []
 
         function log(m: string): void {
@@ -430,84 +307,91 @@ ShellRoot {
             // destroyed while a toast still references them.
             n.tracked = true;
             var stamp = stampNow();
-            history = [{
-                app: n.appName,
-                summary: n.summary,
-                body: n.body,
-                urg: Number(n.urgency),
-                img: n.image || "",
-                stamp: stamp
-            }].concat(history).slice(0, 50);
-            unread++;
-            if (!dnd)
-                spawnToast(n, stamp);
+            const previous = history.find(h => h.id === id);
+            const remaining = history.filter(h => h.id !== id);
+            const centerOpen = tray.visible && tray.page === "notifications";
+            const showBanner = !dnd && !centerOpen && !n.lastGeneration;
+            for (const banner of toastStack.children) {
+                if (banner.toastId === id) {
+                    banner.visible = false;
+                    banner.destroy();
+                }
+            }
+            if (n.transient) {
+                if (previous) history = remaining;
+                if (showBanner) spawnToast(n, stamp);
+                else n.expire();
+                return;
+            }
+            const entries = [{
+                id: id, note: n,
+                unread: !n.lastGeneration && !centerOpen && (!previous || previous.unread),
+                app: n.appName, summary: n.summary, body: n.body,
+                urg: Number(n.urgency), img: imageFor(n), stamp: stamp
+            }].concat(remaining);
+            history = entries.slice(0, 50);
+            for (const old of entries.slice(50)) if (old.note) old.note.expire();
+            if (!previous || previous.note !== n)
+                n.closed.connect(() => { history = history.filter(h => h.note !== n); });
+            if (showBanner) spawnToast(n, stamp);
+        }
+
+        function imageFor(n): string {
+            let image = String(n.image || "");
+            if (!image && n.appIcon) image = String(Quickshell.iconPath(n.appIcon, true) || "");
+            return image.startsWith("/") ? "file://" + image : image;
         }
 
         function spawnToast(n, stamp: string): void {
-            // Replace semantics: a re-sent id supersedes the old toast.
-            for (var i = toastStack.children.length - 1; i >= 0; i--) {
-                var old = toastStack.children[i];
-                if (old.toastId === n.id)
-                    old.destroy();
-            }
             var t = n.expireTimeout;
             var critical = Number(n.urgency) === 2;
-            var sticky = critical && (t === 0 || t < 0);
-            var timeout = sticky ? 0 : (t > 0 ? Math.min(t, 15000) : Theme.notifTimeoutMs);
-            var img = n.image || "";
-            if (img !== "" && img.indexOf("://") < 0)
-                img = "file://" + img;
-            toastComponent.createObject(toastStack, {
+            var sticky = t === 0 || (critical && t < 0);
+            var timeout = sticky ? 0 : (t > 0 ? t : Theme.notifTimeoutMs);
+            const newest = toastComponent.createObject(toastStack, {
                 toastId: n.id,
                 app: n.appName || "Notification",
                 summary: n.summary || "",
                 body: n.body || "",
-                imgSrc: img,
+                imgSrc: imageFor(n),
                 stamp: stamp,
                 note: n,
                 sticky: sticky,
                 timeoutMs: timeout
             });
-            // Cap the stack; oldest non-leaving toast leaves to make room.
-            while (toastStack.children.length > Theme.notifMaxShown) {
-                var victim = null;
-                for (var j = 0; j < toastStack.children.length; j++) {
-                    if (!toastStack.children[j].leaving) {
-                        victim = toastStack.children[j];
-                        break;
-                    }
-                }
-                if (!victim)
-                    break;
-                victim.dismiss();
-            }
-        }
-
-        function openCenter(): void {
-            centerWin.visible = true;
-            center.open();
-            unread = 0;
+            // Count active banners, excluding those already animating out.
+            var active = [];
+            for (var j = 0; j < toastStack.children.length; j++)
+                if (!toastStack.children[j].leaving && (toastStack.children[j] === newest || toastStack.children[j].toastId !== n.id))
+                    active.push(toastStack.children[j]);
+            while (active.length > Theme.notifMaxShown) active.shift().dismiss();
         }
 
         function clearHistory(): void {
+            history.forEach(function(h) { if (h.note) h.note.dismiss(); });
             history = [];
-            unread = 0;
         }
 
         function removeHistory(i: int): void {
-            history = history.filter(function(item, j) {
-                return j !== i;
-            });
+            const entry = history[i];
+            if (!entry) return;
+            history = history.filter(h => h.id !== entry.id);
+            if (entry.note) entry.note.dismiss();
         }
 
         function removeGroup(key: string): void {
+            history.forEach(function(h) {
+                if (((h.app || "Notification") + "").toLowerCase() === key && h.note) h.note.dismiss();
+            });
             history = history.filter(function(h) {
                 return ((((h && h.app) || "Notification") + "").toLowerCase() !== key);
             });
         }
 
         function toggleDnd(): void {
-            dnd = !dnd;
+            preferences.doNotDisturb = !dnd;
+            if (dnd) {
+                for (var i = 0; i < toastStack.children.length; i++) toastStack.children[i].dismiss();
+            }
         }
 
         function statusJson(): string {
@@ -543,10 +427,12 @@ ShellRoot {
             left: true
             right: true
         }
+        screen: tray.currentScreen()
         margins {
-            top: Theme.notifTopMargin
+            top: 36
         }
         implicitHeight: toastStack.implicitHeight
+        BackgroundEffect.blurRegion: Region { item: toastStack; radius: Glass.radius }
         visible: toastStack.children.length > 0
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
@@ -574,44 +460,89 @@ ShellRoot {
         }
     }
 
+    // A single right-edge surface keeps keyboard focus stable when opening a detail view.
     PanelWindow {
-        id: centerWin
-        anchors {
-            top: true
-            bottom: true
-            left: true
-            right: true
+        id: tray
+        property string page: "controls"
+        readonly property var views: ({"controls": controls, "wifi": wifiMenu, "sound": soundMenu,
+                                        "island": island, "notifications": center})
+        readonly property var current: views[page]
+        property bool fromOverview: false
+        function currentScreen(): var {
+            const monitor = Hyprland.focusedMonitor;
+            return Quickshell.screens.find(s => monitor && s.name === monitor.name) || Quickshell.screens[0] || null;
         }
+        function showPage(name: string, detail: bool): void {
+            if (!visible) screen = currentScreen();
+            fromOverview = !!detail;
+            page = name;
+            visible = true;
+            if (name === "notifications") {
+                notifState.history = notifState.history.map(h => Object.assign({}, h, {unread: false}));
+                for (const banner of toastStack.children) banner.dismiss();
+            }
+            current.open();
+            current.forceActiveFocus();
+        }
+        function togglePage(name: string): void {
+            if (visible && page === name) current.close();
+            else showPage(name, false);
+        }
+        function closePage(name: string): void {
+            if (visible && page === name) current.close();
+        }
+        function finish(name: string): void {
+            if (page === name) visible = false;
+        }
+
+        anchors { top: true; left: page === "island"; right: true }
+        margins { top: page === "island" ? Theme.islandTopMargin : 36; right: page === "island" ? 0 : 10 }
+        implicitWidth: Math.min(screen ? screen.width - 20 : 400, Math.ceil(current.frameW))
+        implicitHeight: Math.min(screen ? screen.height - 48 : 700, Math.ceil(current.frameH) + (back.visible ? 32 : 0))
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
-        focusable: true
         visible: false
         color: "transparent"
-
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
-
-        Keys.onEscapePressed: center.close()
+        WlrLayershell.namespace: "desktop-controls"
+        BackgroundEffect.blurRegion: Region { item: tray.page === "island" ? island : content; radius: Glass.radius }
+        mask: Region { item: tray.page === "island" ? island : panelContent }
 
         HyprlandFocusGrab {
-            windows: [centerWin]
-            active: centerWin.visible
-            onCleared: center.close()
+            windows: [tray]
+            active: tray.visible
+            onCleared: if (tray.visible) tray.current.close()
         }
-
+        IpcHandler {
+            target: "controls"
+            function status(): string { return "ready"; }
+            function toggle(): void { tray.togglePage("controls"); }
+            function show(): void { tray.showPage("controls", false); }
+            function hide(): void { tray.closePage("controls"); }
+        }
+        IpcHandler {
+            target: "sound"
+            function toggle(): void { tray.togglePage("sound"); }
+            function show(): void { tray.showPage("sound", false); }
+            function hide(): void { tray.closePage("sound"); }
+        }
+        IpcHandler {
+            target: "wifi"
+            function toggle(): void { tray.togglePage("wifi"); }
+            function show(): void { tray.showPage("wifi", false); }
+            function hide(): void { tray.closePage("wifi"); }
+        }
+        IpcHandler {
+            target: "island"
+            function toggle(): void { tray.togglePage("island"); }
+            function show(): void { tray.showPage("island", false); }
+            function hide(): void { tray.closePage("island"); }
+        }
         IpcHandler {
             target: "notifs"
-            function toggle(): void {
-                if (centerWin.visible)
-                    center.close();
-                else
-                    notifState.openCenter();
-            }
-            function show(): void {
-                notifState.openCenter();
-            }
-            function hide(): void {
-                center.close();
-            }
+            function toggle(): void { tray.togglePage("notifications"); }
+            function show(): void { tray.showPage("notifications", false); }
+            function hide(): void { tray.closePage("notifications"); }
             function clear(): void {
                 notifState.clearHistory();
             }
@@ -635,34 +566,85 @@ ShellRoot {
             }
         }
 
-        // Backdrop — click outside shrinks the center away
-        MouseArea {
-            anchors.fill: parent
-            onClicked: center.close()
-        }
 
-        NotifCenter {
-            id: center
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: Theme.notifTopMargin
-            anchors.rightMargin: Theme.notifRightMargin
-            width: center.frameW
-            height: center.frameH
-            history: notifState.history
-            dnd: notifState.dnd
-            unread: notifState.unread
-            onHideRequested: centerWin.visible = false
-            onClearRequested: notifState.clearHistory()
-            onRemoveRequested: function(i) {
-                notifState.log("history remove tap index=" + i);
-                notifState.removeHistory(i);
+        FocusScope {
+            id: panelContent
+            anchors.fill: parent
+            Keys.onEscapePressed: tray.current.close()
+            Rectangle {
+                id: back
+                visible: tray.visible && tray.fromOverview
+                width: parent.width
+                height: visible ? 32 : 0
+                color: Glass.panel
+                border.color: Glass.stroke
+                radius: 14
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: "Back to Control Center"
+                Accessible.onPressAction: tray.showPage("controls", false)
+                Keys.onReturnPressed: tray.showPage("controls", false)
+                Text {
+                    anchors.centerIn: parent
+                    text: "‹   Control Center"
+                    color: Glass.text
+                    font.family: Glass.font
+                    font.pixelSize: 12
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: tray.showPage("controls", false)
+                }
             }
-            onRemoveGroupRequested: function(k) {
-                notifState.log("history remove group key=" + k);
-                notifState.removeGroup(k);
+            Item {
+                id: content
+                anchors { top: back.bottom; bottom: parent.bottom; left: parent.left; right: parent.right }
+                WifiMenu {
+                    id: wifiMenu
+                    anchors.fill: parent
+                    visible: tray.visible && tray.page === "wifi"
+                    onHideRequested: tray.finish("wifi")
+                }
+                SoundMenu {
+                    id: soundMenu
+                    anchors.fill: parent
+                    visible: tray.visible && tray.page === "sound"
+                    onHideRequested: tray.finish("sound")
+                }
+                ControlCenter {
+                    id: controls
+                    anchors.fill: parent
+                    visible: tray.visible && tray.page === "controls"
+                    dnd: notifState.dnd
+                    onDndToggled: notifState.toggleDnd()
+                    onWifiRequested: tray.showPage("wifi", true)
+                    onSoundRequested: tray.showPage("sound", true)
+                    onHideRequested: tray.finish("controls")
+                }
+                IslandClock {
+                    id: island
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+                    width: frameW
+                    height: frameH
+                    visible: tray.visible && tray.page === "island"
+                    onHideRequested: tray.finish("island")
+                }
+                NotifCenter {
+                    id: center
+                    anchors.fill: parent
+                    visible: tray.visible && tray.page === "notifications"
+                    history: notifState.history
+                    dnd: notifState.dnd
+                    unread: notifState.unread
+                    onDndToggled: notifState.toggleDnd()
+                    onHideRequested: tray.finish("notifications")
+                    onClearRequested: notifState.clearHistory()
+                    onRemoveRequested: i => notifState.removeHistory(i)
+                    onRemoveGroupRequested: k => notifState.removeGroup(k)
+                }
             }
-            onDndToggled: notifState.toggleDnd()
         }
     }
 }

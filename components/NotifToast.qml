@@ -5,15 +5,17 @@
 // action invocation + withdraw handling (guarded — the server may drop it).
 // Same single-driver morph language as the island: one `progress` value
 // (0 gone → 1 settled) drives slide + fade; the timeout bar is time-based.
+pragma ComponentBehavior: Bound
 import QtQuick
+import Quickshell
 
 import "../theme"
 
 Rectangle {
     id: root
-    color: Theme.notifBg
-    radius: Theme.notifRadius
-    border.color: Theme.notifBorder
+    color: Glass.panel
+    radius: 18
+    border.color: Glass.stroke
     border.width: 1
     // No clip: the hover close button intentionally overlaps the corner.
 
@@ -41,7 +43,7 @@ Rectangle {
 
     readonly property bool hasActions: root.note ? root.note.actions.length > 0 : false
 
-    width: Theme.notifWidth
+    width: 380
     // Height follows content; the column defines it.
     height: body.implicitHeight + 24
 
@@ -60,7 +62,6 @@ Rectangle {
     }
 
     function show(): void {
-        notifState.log("toast show id=" + root.toastId + " sticky=" + root.sticky + " timeout=" + root.timeoutMs);
         enterAnim.start();
         if (!sticky) {
             root.remainingMs = root.timeoutMs;
@@ -86,11 +87,26 @@ Rectangle {
     }
 
     function dismiss(): void {
+        hideBanner(true);
+    }
+
+    function dismissNotification(): void {
+        if (root.leaving)
+            return;
+        hideBanner(false);
+        if (root.note && root.note.tracked)
+            root.note.dismiss();
+    }
+
+    function hideBanner(expireTransient): void {
         if (root.leaving)
             return;
         root.leaving = true;
-        notifState.log("toast dismiss id=" + root.toastId);
+
         expireTimer.stop();
+        // Transient notifications have no history card to own their lifetime.
+        if (expireTransient && root.note && root.note.tracked && root.note.transient)
+            root.note.expire();
         exitAnim.start();
     }
 
@@ -100,7 +116,7 @@ Rectangle {
         property: "progress"
         from: 0
         to: 1
-        duration: 500
+        duration: 280
         easing.type: Easing.OutExpo
     }
     NumberAnimation {
@@ -111,7 +127,6 @@ Rectangle {
         duration: 220
         easing.type: Easing.InCubic
         onFinished: {
-            notifState.log("toast exitDone id=" + root.toastId);
             root.destroy();
         }
     }
@@ -141,7 +156,6 @@ Rectangle {
         interval: root.timeoutMs
         repeat: false
         onTriggered: {
-            notifState.log("toast expired id=" + root.toastId);
             root.dismiss();
         }
     }
@@ -149,8 +163,8 @@ Rectangle {
     Component.onCompleted: {
         // App withdrew the notification (replaced/superseded) — leave quietly.
         if (root.note)
-            root.note.closed.connect(function() {
-                root.dismiss();
+            root.note.closed.connect(function () {
+                root.hideBanner(false);
             });
         root.show();
     }
@@ -168,26 +182,27 @@ Rectangle {
         property bool moved: false
         property var samples: []
 
-        onPressed: function(mouse) {
-            notifState.log("toast press id=" + root.toastId + " at=" + Math.round(mouse.x) + "," + Math.round(mouse.y));
+        onPressed: function (mouse) {
             if (root.leaving) {
                 mouse.accepted = false;
                 return;
             }
             root.pauseExpiry();
             snapBack.stop();
-            cardHover.pressX = mouse.x;
+            cardHover.pressX = cardHover.mapToItem(null, mouse.x, mouse.y).x;
             cardHover.pressOX = root.dragX;
             cardHover.moved = false;
-            cardHover.samples = [{
-                x: mouse.x,
-                t: Date.now()
-            }];
+            cardHover.samples = [
+                {
+                    x: cardHover.mapToItem(null, mouse.x, mouse.y).x,
+                    t: Date.now()
+                }
+            ];
         }
-        onPositionChanged: function(mouse) {
+        onPositionChanged: function (mouse) {
             if (!cardHover.pressed || root.leaving)
                 return;
-            var dx = mouse.x - cardHover.pressX;
+            var dx = cardHover.mapToItem(null, mouse.x, mouse.y).x - cardHover.pressX;
             if (Math.abs(dx) > 8)
                 cardHover.moved = true;
             if (!cardHover.moved)
@@ -195,26 +210,36 @@ Rectangle {
             root.dragX = cardHover.pressOX + dx;
             var now = Date.now();
             cardHover.samples.push({
-                x: mouse.x,
+                x: cardHover.mapToItem(null, mouse.x, mouse.y).x,
                 t: now
             });
             while (cardHover.samples.length > 2 && now - cardHover.samples[0].t > 120)
                 cardHover.samples.shift();
         }
         onCanceled: {
-            // Gesture stolen (e.g. another grab) — same as a short release.
+            snapBack.start();
             root.resumeExpiry();
         }
-        onReleased: function(mouse) {
+        onReleased: function (mouse) {
             if (root.leaving)
                 return;
             if (!cardHover.moved) {
+                if (root.note) {
+                    for (var i = 0; i < root.note.actions.length; i++) {
+                        if (root.note.actions[i].identifier === "default") {
+                            root.note.actions[i].invoke();
+                            break;
+                        }
+                    }
+                }
                 root.dismiss();
                 return;
             }
             var vx = 0;
             var n = cardHover.samples.length;
-            if (n > 1) {
+            // A fast movement followed by a hold is no longer a flick.
+            // Movement samples alone otherwise retain stale release velocity.
+            if (n > 1 && Date.now() - cardHover.samples[n - 1].t < 120) {
                 var a = cardHover.samples[0], b = cardHover.samples[n - 1];
                 var dt = Math.max(1, b.t - a.t);
                 vx = (b.x - a.x) / dt * 1000;
@@ -224,13 +249,15 @@ Rectangle {
                 // Fling out sideways in the flick direction, then gone.
                 var dir = Math.abs(vx) > 100 ? (vx > 0 ? 1 : -1) : (root.dragX >= 0 ? 1 : -1);
                 flingX.to = dir * 560;
-                notifState.log("toast fling id=" + root.toastId + " dist=" + Math.round(dist) + " speed=" + Math.round(vx));
+
                 root.leaving = true;
                 expireTimer.stop();
+                if (root.note && root.note.tracked)
+                    root.note.dismiss();
                 flingX.start();
             } else {
-                notifState.log("toast snapback id=" + root.toastId + " dist=" + Math.round(dist));
-                root.resumeExpiry();
+                if (!hoverDetect.containsMouse)
+                    root.resumeExpiry();
                 snapBack.start();
             }
         }
@@ -247,152 +274,181 @@ Rectangle {
         width: parent.width
         height: parent.height
 
-    Row {
-        id: body
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.topMargin: 12
-        anchors.leftMargin: Theme.notifPadding
-        anchors.rightMargin: Theme.notifPadding
-        spacing: 12
-
-        // App artwork; macOS-style initial tile when none is sent.
-        Rectangle {
-            id: iconTile
-            anchors.top: parent.top
-            width: 48
-            height: 48
-            radius: 10
-            color: thumbImg.visible ? "transparent" : "#2c2c30"
-            clip: true
-
-            Image {
-                id: thumbImg
-                anchors.fill: parent
-                visible: root.imgSrc !== "" && status !== Image.Error
-                source: root.imgSrc
-                asynchronous: true
-                fillMode: Image.PreserveAspectCrop
-            }
-            Text {
-                anchors.centerIn: parent
-                visible: !thumbImg.visible
-                text: root.app.charAt(0).toUpperCase()
-                color: "#a0a0a8"
-                font.family: Theme.notifFont
-                font.pixelSize: 20
-                font.bold: true
-            }
-        }
-
-        Column {
-            width: parent.width - iconTile.width - parent.spacing
-            spacing: 2
-
-        Text {
-            width: parent.width
-            visible: text !== ""
-            wrapMode: Text.Wrap
-            maximumLineCount: 2
-            elide: Text.ElideRight
-            text: root.summary
-            color: Theme.notifText
-            font.family: Theme.notifFont
-            font.pixelSize: Theme.notifTitleSize
-            font.bold: true
-        }
-
-        Text {
-            width: parent.width
-            visible: text !== ""
-            wrapMode: Text.Wrap
-            maximumLineCount: 4
-            elide: Text.ElideRight
-            text: root.body
-            color: Theme.notifDim
-            font.family: Theme.notifFont
-            font.pixelSize: Theme.notifBodySize
-        }
-
         Row {
-            width: parent.width
-            visible: root.hasActions
-            spacing: 8
-            Repeater {
-                model: root.note ? root.note.actions : []
-                delegate: Rectangle {
-                    required property var modelData
-                    width: Math.min(actionLabel.implicitWidth + 24, 160)
-                    height: 30
-                    radius: 15
-                    color: btnHover.containsMouse ? Theme.notifHover : "#0dffffff"
-                    border.color: Theme.notifBorder
-                    border.width: 1
+            id: body
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.topMargin: 12
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            spacing: 12
+
+            // App artwork; macOS-style initial tile when none is sent.
+            Rectangle {
+                id: iconTile
+                anchors.top: parent.top
+                width: 48
+                height: 48
+                radius: 10
+                color: thumbImg.visible ? "transparent" : "#2c2c30"
+                clip: true
+
+                Image {
+                    id: thumbImg
+                    anchors.fill: parent
+                    visible: root.imgSrc !== "" && status !== Image.Error
+                    source: root.imgSrc
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectCrop
+                }
+                Text {
+                    anchors.centerIn: parent
+                    visible: !thumbImg.visible
+                    text: root.app.charAt(0).toUpperCase()
+                    color: "#a0a0a8"
+                    font.family: Glass.font
+                    font.pixelSize: 20
+                    font.bold: true
+                }
+            }
+
+            Column {
+                width: parent.width - iconTile.width - parent.spacing
+                spacing: 2
+
+                Item {
+                    width: parent.width
+                    height: 15
                     Text {
-                        id: actionLabel
-                        anchors.centerIn: parent
-                        width: parent.width - 24
-                        horizontalAlignment: Text.AlignHCenter
+                        anchors.left: parent.left
+                        anchors.right: bannerTime.left
+                        anchors.rightMargin: 6
+                        text: root.app
+                        textFormat: Text.PlainText
                         elide: Text.ElideRight
-                        text: modelData.text
-                        color: Theme.notifText
-                        font.family: Theme.notifFont
-                        font.pixelSize: Theme.notifSmallSize
-                        font.bold: true
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 10
                     }
-                    MouseArea {
-                        id: btnHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: {
-                            modelData.invoke();
-                            root.dismiss();
+                    Text {
+                        id: bannerTime
+                        anchors.right: parent.right
+                        text: root.stamp
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 10
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    visible: text !== ""
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: root.summary
+                    color: Glass.text
+                    font.family: Glass.font
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+
+                Text {
+                    width: parent.width
+                    visible: text !== ""
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: root.body
+                    color: Glass.secondary
+                    font.family: Glass.font
+                    font.pixelSize: 12
+                }
+
+                Flow {
+                    width: parent.width
+                    visible: root.hasActions
+                    spacing: 8
+                    Repeater {
+                        model: root.note ? root.note.actions : []
+                        delegate: Rectangle {
+                            id: toastAction
+                            required property var modelData
+                            visible: modelData.identifier !== "default"
+                            width: Math.min(actionLabel.implicitWidth + 24, 160)
+                            height: 30
+                            radius: 15
+                            color: btnHover.containsMouse ? Glass.hover : "#0dffffff"
+                            border.color: Glass.stroke
+                            border.width: 1
+                            Text {
+                                id: actionLabel
+                                anchors.centerIn: parent
+                                width: parent.width - 24
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                textFormat: Text.PlainText
+                                text: toastAction.modelData.text
+                                color: Glass.text
+                                font.family: Glass.font
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                            MouseArea {
+                                id: btnHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    toastAction.modelData.invoke();
+                                    root.dismiss();
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        }
-    }
 
-    // Hover-reveal close, parked just inside the top-left corner. (Was
-    // -9/-9 overlapping outside, which clipped above the layer surface
-    // for the topmost toast — the window has no headroom there. Inside
-    // keeps every row identical with no window padding changes.)
-    Rectangle {
-        anchors.left: parent.left
-        anchors.leftMargin: 8
-        anchors.top: parent.top
-        anchors.topMargin: 8
-        width: 22
-        height: 22
-        radius: 11
-        color: "#48484a"
-        opacity: hoverDetect.containsMouse ? 1 : 0
-        visible: opacity > 0
+        // Hover-reveal close, parked just inside the top-left corner. (Was
+        // -9/-9 overlapping outside, which clipped above the layer surface
+        // for the topmost toast — the window has no headroom there. Inside
+        // keeps every row identical with no window padding changes.)
+        Rectangle {
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            anchors.top: parent.top
+            anchors.topMargin: 8
+            width: 22
+            height: 22
+            radius: 11
+            color: "#48484a"
+            opacity: hoverDetect.containsMouse ? 1 : 0
+            visible: opacity > 0
 
-        Behavior on opacity {
-            NumberAnimation {
-                duration: 150
-                easing.type: Easing.OutCubic
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 150
+                    easing.type: Easing.OutCubic
+                }
+            }
+
+            Text {
+                anchors.centerIn: parent
+                text: "✕"
+                color: "#ffffff"
+                font.family: Glass.font
+                font.pixelSize: 11
+                font.bold: true
+            }
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -4
+                onClicked: root.dismissNotification()
             }
         }
-
-        Text {
-            anchors.centerIn: parent
-            text: "✕"
-            color: "#ffffff"
-            font.family: Theme.notifFont
-            font.pixelSize: 11
-            font.bold: true
-        }
-        MouseArea {
-            anchors.fill: parent
-            anchors.margins: -4
-            onClicked: root.dismiss()
-        }
-    }
     }
 
     // Topmost hover detector: Qt reports containsMouse only to the uppermost
@@ -405,5 +461,8 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.NoButton
+        onEntered: root.pauseExpiry()
+        onExited: if (!cardHover.pressed)
+            root.resumeExpiry()
     }
 }

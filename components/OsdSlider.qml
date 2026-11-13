@@ -10,12 +10,12 @@ Rectangle {
     width: Theme.trackWidth
     height: Theme.trackHeight
     radius: Theme.trackRadius
-    color: Theme.trackBg
+    color: Glass.hover
 
     Rectangle {
         width: track.width * Math.max(0, Math.min(100, track.level)) / 100
         height: parent.height
         radius: Theme.trackRadius
-        color: Theme.fillColor
+        color: Glass.text
     }
 }

@@ -1,646 +1,445 @@
-// Wi-Fi menu panel: toggle, live network list (nmcli), inline password connect.
-// Lives in a fullscreen transparent PanelWindow (see shell.qml wifiWin).
-// open() runs one continuous dot→card morph; close() shrinks it back and
-// emits hideRequested so the shell can hide the window.
+pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Controls
 import Quickshell.Io
-
+import Quickshell.Networking
 import "../theme"
 
 Rectangle {
     id: root
-    color: Theme.wifiBg
-    // Single continuous morph, same language as the island/center: every
-    // dimension is a function of `progress` (0 dot → 1 full card), driven
-    // by exactly one animation. Radius blends from a perfect circle into
-    // the card corner — no staged retargets.
-    radius: (1 - root.progress) * Math.min(root.width, root.height) / 2 + root.progress * Theme.wifiRadius
-    border.color: Theme.wifiBorder
+    color: Glass.panel
+    radius: Glass.radius
+    border.color: Glass.stroke
     border.width: 1
     clip: true
-
-    property bool wifiEnabled: true
-    property bool busy: false
-    property string status: ""
-    property string pendingSsid: ""
-    property string manageSsid: ""
-    property bool hiddenExpanded: false
-    property string connectingSsid: ""
-    property var known: ({})
-
-    // Footer stack heights: rescan (40) + hidden button (40) + optional
-    // hidden panel (144). The extra 4s are the column gaps; the trailing
-    // -16 in the list height keeps slack so the fixed window never clips.
-    property int footerH: 40 + 4 + 40 + (hiddenExpanded ? 4 + 144 : 0)
-
-    // 0 = dot, 1 = full card. Animated once per open (OutExpo: fast
-    // expansion, soft landing — the Dynamic Island feel).
     property real progress: 0
     property bool exiting: false
-
-    readonly property real frameW: Theme.wifiDot + (Theme.wifiWidth - Theme.wifiDot) * root.progress
-    readonly property real frameH: Theme.wifiDot + (Theme.wifiHeight - Theme.wifiDot) * root.progress
-    // Contents fade in over the final stretch of the morph only.
-    readonly property real contentOpacity: Math.min(1, Math.max(0, (root.progress - 0.8) / 0.2))
-
-    signal hideRequested()
+    readonly property real frameW: 340
+    readonly property real frameH: Math.min(480, 162 + Math.max(60, networkColumn.implicitHeight) + (status ? statusLabel.height + 7 : 0))
+    readonly property var wifiDevices: Networking.devices.values.filter(d => d.type === DeviceType.Wifi)
+    readonly property bool wifiEnabled: Networking.wifiEnabled
+    readonly property bool hardwareEnabled: Networking.wifiHardwareEnabled
+    readonly property bool available: wifiDevices.length > 0
+    readonly property bool busy: selected ? selected.stateChanging : false
+    property bool failed: false
+    property string message: ""
+    readonly property string status: message || (!available ? "No Wi-Fi adapter found" : !hardwareEnabled ? "Wi-Fi is disabled by the hardware switch" : !wifiEnabled ? "Wi-Fi is off" : Networking.connectivity === NetworkConnectivity.Portal ? "Sign in to this network in your browser" : "")
+    readonly property var networks: {
+        let result = [];
+        for (const device of wifiDevices)
+            result = result.concat(device.networks.values);
+        return result.sort((a, b) => Number(b.connected) - Number(a.connected) || Number(b.known) - Number(a.known) || b.signalStrength - a.signalStrength || a.name.localeCompare(b.name));
+    }
+    property var selected: null
+    property var pendingNetwork: null
+    // Scan updates can reorder/recreate rows while a password is being typed.
+    property string passwordDraft: ""
+    onPendingNetworkChanged: passwordDraft = ""
+    onVisibleChanged: if (!visible) pendingNetwork = null
+    property var manageNetwork: null
+    property bool otherExpanded: true
+    property bool scanPause: false
+    signal hideRequested
+    opacity: progress
+    scale: 0.96 + 0.04 * progress
+    transformOrigin: Item.TopRight
 
     function open(): void {
-        morphOut.stop();
-        root.exiting = false;
-        refresh();
-        morphIn.start();
+        exiting = false;
+        pendingNetwork = null;
+        manageNetwork = null;
+        message = "";
+        failed = false;
+        closing.stop();
+        opening.restart();
     }
-
     function close(): void {
-        if (root.exiting)
+        if (exiting)
             return;
-        root.exiting = true;
-        morphIn.stop();
-        morphOut.start();
+        exiting = true;
+        pendingNetwork = null;
+        opening.stop();
+        closing.restart();
     }
-
-    // The one and only morph driver. Entry: fast continuous expansion;
-    // exit: quick shrink, then the shell hides the window.
     NumberAnimation {
-        id: morphIn
+        id: opening
         target: root
         property: "progress"
-        from: 0
         to: 1
-        duration: 650
-        easing.type: Easing.OutExpo
+        duration: 180
+        easing.type: Easing.OutCubic
     }
     NumberAnimation {
-        id: morphOut
+        id: closing
         target: root
         property: "progress"
         to: 0
-        duration: 220
-        easing.type: Easing.InCubic
-        onFinished: {
-            root.exiting = false;
-            root.hideRequested();
-        }
+        duration: 120
+        onFinished: root.hideRequested()
     }
 
-    // Swallow clicks on the card so the fullscreen backdrop behind it
-    // (which dismisses on outside-click) never fires from inside.
+    function isPersonal(network): bool {
+        return [WifiSecurityType.WpaPsk, WifiSecurityType.Wpa2Psk, WifiSecurityType.Sae].indexOf(network.security) >= 0;
+    }
+    function isOpen(network): bool {
+        return network.security === WifiSecurityType.Open || network.security === WifiSecurityType.Owe;
+    }
+    function join(network, password): void {
+        if (busy || !wifiEnabled)
+            return;
+        selected = network;
+        pendingNetwork = null;
+        failed = false;
+        message = "Joining " + network.name + "…";
+        if (password)
+            network.connectWithPsk(password);
+        else
+            network.connect();
+        operationTimeout.restart();
+    }
+    function rowClicked(network): void {
+        if (busy)
+            return;
+        selected = network;
+        failed = false;
+        message = "";
+        if (network.connected) {
+            manageNetwork = manageNetwork === network ? null : network;
+            pendingNetwork = null;
+        } else if (network.known || isOpen(network)) {
+            manageNetwork = null;
+            join(network, "");
+        } else if (isPersonal(network)) {
+            manageNetwork = null;
+            pendingNetwork = pendingNetwork === network ? null : network;
+        } else {
+            failed = true;
+            message = "Configure this network in Network Settings.";
+        }
+    }
+    function toggleWifi(): void {
+        if (!available || !hardwareEnabled)
+            return;
+        failed = false;
+        message = "";
+        pendingNetwork = null;
+        manageNetwork = null;
+        Networking.wifiEnabled = !wifiEnabled;
+    }
+    function disconnectNetwork(network): void {
+        selected = network;
+        manageNetwork = null;
+        failed = false;
+        message = "Disconnecting…";
+        network.disconnect();
+        operationTimeout.restart();
+    }
+    function openSettings(): void {
+        settingsProcess.command = ["sh", "-c", "if command -v nm-connection-editor >/dev/null 2>&1; then exec nm-connection-editor; else exec kitty -e nmtui; fi"];
+        settingsProcess.startDetached();
+        close();
+    }
+    Process {
+        id: settingsProcess
+    }
+    Connections {
+        target: root.selected
+        function onConnectionFailed(reason) {
+            operationTimeout.stop();
+            root.failed = true;
+            root.message = reason === ConnectionFailReason.NoSecrets ? "A password is required. Try again." : "Could not join. Check the password or Network Settings.";
+            if (root.selected && root.isPersonal(root.selected))
+                root.pendingNetwork = root.selected;
+        }
+        function onStateChanged() {
+            if (!root.selected)
+                return;
+            if (root.selected.state === ConnectionState.Connected) {
+                operationTimeout.stop();
+                root.failed = false;
+                root.message = "";
+            } else if (root.selected.state === ConnectionState.Disconnected && !root.failed) {
+                operationTimeout.stop();
+                root.message = "";
+            }
+        }
+    }
+    Timer {
+        id: operationTimeout
+        interval: 45000
+        onTriggered: {
+            root.failed = true;
+            root.message = "The network request timed out. Try Network Settings.";
+        }
+    }
+    // Native scanning follows the popup's lifetime, without background polling.
+    Repeater {
+        model: root.wifiDevices
+        delegate: Item {
+            id: scanner
+            required property var modelData
+            Binding {
+                target: scanner.modelData
+                property: "scannerEnabled"
+                value: root.visible && root.progress > 0 && !root.exiting && root.wifiEnabled && !root.scanPause
+            }
+        }
+    }
+    Timer {
+        id: scanRestart
+        interval: 150
+        onTriggered: root.scanPause = false
+    }
+
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
         onClicked: {}
     }
-
-    // ---- morph start: bare pulsing dot, dissolves as expansion begins ----
-    // Outer fades with progress; inner runs the pulse loop so the two
-    // opacity drivers never fight over one property.
-    Item {
-        anchors.centerIn: parent
-        width: 8
-        height: 8
-        opacity: 1 - Math.min(1, root.progress * 4)
-        visible: opacity > 0
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 4
-            color: Theme.wifiAccent
-
-            SequentialAnimation on opacity {
-                loops: Animation.Infinite
-                running: root.progress < 0.3
-                NumberAnimation {
-                    to: 0.3
-                    duration: 900
-                    easing.type: Easing.InOutQuad
-                }
-                NumberAnimation {
-                    to: 1
-                    duration: 900
-                    easing.type: Easing.InOutQuad
-                }
-            }
-        }
-    }
-
-    ListModel {
-        id: networks
-    }
-
-    function setStatus(s: string): void {
-        root.status = s;
-    }
-
-    // ---- nmcli runners ----
-    Process {
-        id: listProc
-        stdout: StdioCollector {
-            onStreamFinished: parseList(text)
-        }
-    }
-    Process {
-        id: knownProc
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var k = {};
-                var lines = text.split("\n");
-                for (var i = 0; i < lines.length; i++) {
-                    var n = lines[i].trim();
-                    if (n !== "")
-                        k[n] = true;
-                }
-                root.known = k;
-            }
-        }
-    }
-    Process {
-        id: stateProc
-        stdout: StdioCollector {
-            onStreamFinished: {
-                root.wifiEnabled = text.trim() === "enabled";
-                if (!root.wifiEnabled) {
-                    networks.clear();
-                    setStatus("Wi-Fi is off");
-                }
-            }
-        }
-    }
-    Process {
-        id: actionProc
-        property string action: ""
-        property string actionSsid: ""
-        stdout: StdioCollector {
-            id: actionOut
-        }
-        stderr: StdioCollector {
-            id: actionErr
-        }
-        onExited: {
-            if (actionProc.action === "connect") {
-                if (exitCode === 0) {
-                    setStatus("Connected to " + actionProc.actionSsid);
-                    root.pendingSsid = "";
-                    refreshSoon.restart();
-                    hideSoon.restart();
-                } else {
-                    var err = actionErr.text.trim().split("\n").pop() || "Connection failed";
-                    setStatus(err.length > 60 ? err.slice(0, 60) + "…" : err);
-                }
-                root.connectingSsid = "";
-                root.busy = false;
-            } else if (actionProc.action === "toggle") {
-                refresh();
-            } else if (actionProc.action === "disconnect") {
-                root.busy = false;
-                if (exitCode === 0) {
-                    root.manageSsid = "";
-                    setStatus("Disconnected");
-                    refreshSoon.restart();
-                } else {
-                    var derr = actionErr.text.trim().split("\n").pop() || "Disconnect failed";
-                    setStatus(derr.length > 60 ? derr.slice(0, 60) + "…" : derr);
-                }
-            }
-        }
-    }
-    // Resolves the active Wi-Fi connection's UUID so doDisconnect()
-    // targets exactly this machine's wireless uplink (iface name varies).
-    Process {
-        id: activeProc
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var uuid = "";
-                var lines = text.split("\n");
-                for (var i = 0; i < lines.length; i++) {
-                    var parts = lines[i].trim().split(":");
-                    if (parts.length >= 2 && parts[1] === "802-11-wireless" && parts[0] !== "") {
-                        uuid = parts[0];
-                        break;
-                    }
-                }
-                if (uuid === "") {
-                    root.busy = false;
-                    setStatus("Not connected");
-                } else {
-                    actionProc.action = "disconnect";
-                    actionProc.exec(["nmcli", "con", "down", "uuid", uuid]);
-                }
-            }
-        }
-    }
-
-    Timer {
-        id: refreshSoon
-        interval: 1500
-        onTriggered: refresh()
-    }
-    Timer {
-        id: hideSoon
-        interval: 1800
-        onTriggered: root.close()
-    }
-    Timer {
-        id: rescanWait
-        interval: 4000
-        onTriggered: {
-            listProc.exec(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list"]);
-            root.busy = false;
-            setStatus("");
-        }
-    }
-
-    // ---- public ops ----
-    function refresh(): void {
-        // Menus open in a clean state (matches GNOME/Windows panels).
-        root.pendingSsid = "";
-        root.manageSsid = "";
-        root.hiddenExpanded = false;
-        root.busy = true;
-        setStatus("Scanning…");
-        stateProc.exec(["nmcli", "-t", "-f", "WIFI", "g"]);
-        knownProc.exec(["nmcli", "-t", "-f", "NAME", "connection", "show"]);
-        listProc.exec(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list"]);
-    }
-
-    function rescan(): void {
-        if (root.busy)
-            return;
-        // A fresh scan rebuilds the list (wiping delegates), so collapse
-        // any inline prompt rather than silently dropping typed input.
-        root.pendingSsid = "";
-        root.manageSsid = "";
-        setStatus("Scanning…");
-        root.busy = true;
-        actionProc.action = "rescan";
-        actionProc.exec(["nmcli", "dev", "wifi", "rescan"]);
-        rescanWait.restart();
-    }
-
-    function toggleWifi(): void {
-        actionProc.action = "toggle";
-        root.busy = true;
-        setStatus(root.wifiEnabled ? "Turning Wi-Fi off…" : "Turning Wi-Fi on…");
-        actionProc.exec(["nmcli", "radio", "wifi", root.wifiEnabled ? "off" : "on"]);
-    }
-
-    function rowClicked(ssid: string, secured: bool, active: bool): void {
-        if (root.connectingSsid !== "" || !root.wifiEnabled)
-            return;
-        if (active) {
-            // Connected row expands a Disconnect panel (GNOME/Windows parity),
-            // never a redundant reconnect.
-            root.manageSsid = (root.manageSsid === ssid) ? "" : ssid;
-            root.pendingSsid = "";
-            return;
-        }
-        root.manageSsid = "";
-        if (root.known[ssid] || !secured) {
-            doConnect(ssid, "");
-        } else {
-            root.pendingSsid = (root.pendingSsid === ssid) ? "" : ssid;
-        }
-    }
-
-    function doDisconnect(): void {
-        root.manageSsid = "";
-        root.busy = true;
-        setStatus("Disconnecting…");
-        activeProc.exec(["nmcli", "-t", "-f", "UUID,TYPE", "con", "show", "--active"]);
-    }
-
-    function doConnectHidden(ssid: string, password: string): void {
-        var name = ssid.trim();
-        if (name === "" || root.connectingSsid !== "")
-            return;
-        root.hiddenExpanded = false;
-        hiddenSsidInput.text = "";
-        hiddenPwInput.text = "";
-        root.pendingSsid = "";
-        root.manageSsid = "";
-        root.connectingSsid = name;
-        root.busy = true;
-        setStatus("Connecting to " + name + "…");
-        actionProc.action = "connect";
-        actionProc.actionSsid = name;
-        var cmd = ["nmcli", "-w", "15", "dev", "wifi", "connect", name];
-        if (password !== "")
-            cmd = cmd.concat(["password", password]);
-        cmd = cmd.concat(["hidden", "yes"]);
-        actionProc.exec(cmd);
-    }
-
-    function doConnect(ssid: string, password: string): void {
-        root.connectingSsid = ssid;
-        root.pendingSsid = "";
-        root.busy = true;
-        setStatus("Connecting to " + ssid + "…");
-        actionProc.action = "connect";
-        actionProc.actionSsid = ssid;
-        var cmd = ["nmcli", "-w", "15", "dev", "wifi", "connect", ssid];
-        if (password !== "")
-            cmd = cmd.concat(["password", password]);
-        actionProc.exec(cmd);
-    }
-
-    // ---- parsing: IN-USE:SSID:SIGNAL:SECURITY (SSID may contain colons) ----
-    function parseList(text: string): void {
-        var bySsid = {};
-        var lines = text.split("\n");
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            if (line.trim() === "")
-                continue;
-            var parts = line.split(":");
-            if (parts.length < 4)
-                continue;
-            var inUse = parts[0] === "*";
-            var security = parts[parts.length - 1];
-            var signal = parseInt(parts[parts.length - 2], 10);
-            var ssid = parts.slice(1, parts.length - 2).join(":");
-            if (ssid === "" || isNaN(signal))
-                continue;
-            if (!(ssid in bySsid) || signal > bySsid[ssid].signal || inUse)
-                bySsid[ssid] = {
-                    ssid: ssid,
-                    signal: signal,
-                    secured: security !== "" && security !== "--",
-                    active: inUse
-                };
-            if (inUse)
-                bySsid[ssid].active = true;
-        }
-        var arr = [];
-        for (var k in bySsid)
-            arr.push(bySsid[k]);
-        arr.sort(function(a, b) {
-            if (a.active !== b.active)
-                return a.active ? -1 : 1;
-            return b.signal - a.signal;
-        });
-        networks.clear();
-        for (var j = 0; j < arr.length; j++)
-            networks.append(arr[j]);
-        // Collapse inline panels whose network vanished from the scan so a
-        // stale prompt can never target a network that is no longer there.
-        if (root.pendingSsid !== "" && !(root.pendingSsid in bySsid))
-            root.pendingSsid = "";
-        if (root.manageSsid !== "" && (!(root.manageSsid in bySsid) || !bySsid[root.manageSsid].active))
-            root.manageSsid = "";
-        root.busy = false;
-        if (arr.length === 0 && root.wifiEnabled)
-            setStatus("No networks found");
-        else if (root.connectingSsid === "" && root.status !== "Wi-Fi is off")
-            setStatus("");
-    }
-
-    // ---- layout ----
     Column {
+        id: contents
         anchors.fill: parent
-        anchors.margins: Theme.wifiPadding
-        spacing: 4
-        opacity: root.contentOpacity
-        enabled: root.progress > 0.85
-        visible: opacity > 0
-
-        // Header: title + status + toggle + close
+        anchors.margins: 12
+        spacing: 7
         Item {
             width: parent.width
-            height: Theme.wifiHeaderHeight
+            height: 38
             Text {
-                anchors.left: parent.left
-                anchors.leftMargin: 12
+                x: 8
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Wi-Fi"
-                color: Theme.wifiText
-                font.family: Theme.wifiFont
-                font.pixelSize: Theme.wifiTitleSize
-                font.bold: true
+                color: Glass.text
+                font.family: Glass.font
+                font.pixelSize: 15
+                font.weight: Font.DemiBold
             }
-            // Toggle pill
             Rectangle {
-                id: togglePill
-                anchors.right: closeBtn.left
-                anchors.rightMargin: 8
+                id: wifiSwitch
+                activeFocusOnTab: root.available && root.hardwareEnabled
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: "Wi-Fi"
+                Accessible.checked: root.wifiEnabled
+                Accessible.onToggleAction: root.toggleWifi()
+                Keys.onSpacePressed: root.toggleWifi()
+                Keys.onReturnPressed: root.toggleWifi()
+                border.width: activeFocus ? 1 : 0
+                border.color: Glass.text
+                anchors.right: parent.right
+                anchors.rightMargin: 7
                 anchors.verticalCenter: parent.verticalCenter
-                width: 44
-                height: 24
+                width: 38
+                height: 23
                 radius: 12
-                color: root.wifiEnabled ? "#3a8cff" : "#33ffffff"
+                color: root.wifiEnabled ? Glass.accent : Glass.hover
+                opacity: !root.hardwareEnabled || !root.available ? 0.5 : 1
                 Rectangle {
-                    width: 18
-                    height: 18
-                    radius: 9
+                    y: 2
+                    x: root.wifiEnabled ? 17 : 2
+                    width: 19
+                    height: 19
+                    radius: 10
                     color: "white"
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: root.wifiEnabled ? parent.width - width - 3 : 3
                     Behavior on x {
                         NumberAnimation {
-                            duration: 150
+                            duration: 130
                         }
                     }
                 }
                 MouseArea {
                     anchors.fill: parent
+                    enabled: root.hardwareEnabled && root.available
                     onClicked: root.toggleWifi()
                 }
             }
-            Text {
-                id: closeBtn
-                anchors.right: parent.right
-                anchors.rightMargin: 12
-                anchors.verticalCenter: parent.verticalCenter
-                text: "✕"
-                color: Theme.wifiDim
-                font.family: Theme.wifiFont
-                font.pixelSize: 14
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -8
-                    onClicked: root.close()
-                }
-            }
         }
-
-        Text {
+        Rectangle {
             width: parent.width
-            height: 20
+            height: 1
+            color: Glass.stroke
+        }
+        Text {
+            id: statusLabel
+            width: parent.width - 16
+            x: 8
             visible: root.status !== ""
             text: root.status
-            elide: Text.ElideRight
-            color: Theme.wifiDim
-            font.family: Theme.wifiFont
-            font.pixelSize: Theme.wifiSmallSize
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: root.failed ? Glass.danger : Glass.secondary
+            font.family: Glass.font
+            font.pixelSize: 11
         }
-
-        ListView {
-            id: netList
+        Flickable {
+            id: scroll
             width: parent.width
-            height: parent.height - Theme.wifiHeaderHeight - (root.status !== "" ? 24 : 4) - root.footerH - 16
+            height: Math.max(60, contents.height - 38 - footer.height - 29 - (root.status ? statusLabel.height + 7 : 0))
+            contentHeight: networkColumn.height
             clip: true
-            spacing: 2
-            model: networks
-            delegate: WifiRow {
-                ssid: model.ssid
-                signal: model.signal
-                secured: model.secured
-                active: model.active
-                connecting: model.ssid === root.connectingSsid
-                expanded: model.ssid === root.pendingSsid
-                manage: model.ssid === root.manageSsid
-                onClicked: root.rowClicked(model.ssid, model.secured, model.active)
-                onPasswordEntered: function(pw) {
-                    root.doConnect(model.ssid, pw);
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+            }
+            Column {
+                id: networkColumn
+                width: scroll.width
+                spacing: 3
+                Text {
+                    x: 8
+                    height: 28
+                    visible: root.wifiEnabled && root.networks.some(n => n.known)
+                    text: "Known Networks"
+                    color: Glass.secondary
+                    font.family: Glass.font
+                    font.pixelSize: 11
+                    font.weight: Font.DemiBold
+                    verticalAlignment: Text.AlignVCenter
                 }
-                onDisconnectRequested: root.doDisconnect()
-            }
-        }
-
-        // Footer: rescan
-        Rectangle {
-            width: parent.width
-            height: 40
-            radius: Theme.wifiRowRadius
-            color: rescanMouse.containsMouse ? Theme.wifiRowHover : "transparent"
-            Text {
-                anchors.centerIn: parent
-                text: root.busy ? "Scanning…" : "⟳  Rescan"
-                color: Theme.wifiDim
-                font.family: Theme.wifiFont
-                font.pixelSize: Theme.wifiBodySize
-            }
-            MouseArea {
-                id: rescanMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.rescan()
-            }
-        }
-
-        // Footer: join hidden network (SSID broadcast disabled)
-        Rectangle {
-            width: parent.width
-            height: 40
-            radius: Theme.wifiRowRadius
-            color: hiddenMouse.containsMouse ? Theme.wifiRowHover : "transparent"
-            Text {
-                anchors.centerIn: parent
-                text: (root.hiddenExpanded ? "▾  " : "＋  ") + "Join hidden network…"
-                color: Theme.wifiDim
-                font.family: Theme.wifiFont
-                font.pixelSize: Theme.wifiBodySize
-            }
-            MouseArea {
-                id: hiddenMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: {
-                    root.hiddenExpanded = !root.hiddenExpanded;
-                    root.pendingSsid = "";
-                    root.manageSsid = "";
-                    if (root.hiddenExpanded)
-                        hiddenSsidInput.forceActiveFocus();
+                Repeater {
+                    model: root.wifiEnabled ? root.networks.filter(n => n.known) : []
+                    delegate: WifiRow {
+                        required property var modelData
+                        ssid: modelData.name
+                        signal: Math.round(modelData.signalStrength * 100)
+                        secured: !root.isOpen(modelData)
+                        active: modelData.connected
+                        connecting: modelData.state === ConnectionState.Connecting
+                        expanded: root.pendingNetwork === modelData
+                        passwordDraft: expanded ? root.passwordDraft : ""
+                        manage: root.manageNetwork === modelData
+                        busy: root.busy
+                        onClicked: root.rowClicked(modelData)
+                        onPasswordEntered: password => root.join(modelData, password)
+                        onPasswordEdited: password => root.passwordDraft = password
+                        onDisconnectRequested: root.disconnectNetwork(modelData)
+                    }
+                }
+                Item {
+                    width: parent.width
+                    height: root.wifiEnabled ? 31 : 0
+                    visible: root.wifiEnabled
+                    Text {
+                        x: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Other Networks"
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.otherExpanded ? "⌃" : "⌄"
+                        color: Glass.secondary
+                        font.pixelSize: 15
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: root.otherExpanded = !root.otherExpanded
+                    }
+                }
+                Repeater {
+                    model: root.wifiEnabled && root.otherExpanded ? root.networks.filter(n => !n.known) : []
+                    delegate: WifiRow {
+                        required property var modelData
+                        ssid: modelData.name
+                        signal: Math.round(modelData.signalStrength * 100)
+                        secured: !root.isOpen(modelData)
+                        active: modelData.connected
+                        connecting: modelData.state === ConnectionState.Connecting
+                        expanded: root.pendingNetwork === modelData
+                        passwordDraft: expanded ? root.passwordDraft : ""
+                        manage: root.manageNetwork === modelData
+                        busy: root.busy
+                        onClicked: root.rowClicked(modelData)
+                        onPasswordEntered: password => root.join(modelData, password)
+                        onPasswordEdited: password => root.passwordDraft = password
+                        onDisconnectRequested: root.disconnectNetwork(modelData)
+                    }
+                }
+                Text {
+                    x: 8
+                    visible: root.wifiEnabled && !root.networks.length && !root.busy
+                    text: "No networks found"
+                    color: Glass.secondary
+                    font.family: Glass.font
+                    font.pixelSize: 12
+                    height: 35
                 }
             }
         }
-
-        // Hidden-network form: SSID + optional password + Join.
-        // Fixed height math (44 + 44 + 40 + 2×8 spacing = 144) must match
-        // footerH above so the list shrinks instead of overflowing.
         Column {
-            visible: root.hiddenExpanded
+            id: footer
             width: parent.width
-            height: root.hiddenExpanded ? 144 : 0
-            spacing: 8
-
+            spacing: 3
             Rectangle {
                 width: parent.width
-                height: 44
-                radius: Theme.wifiRowRadius
-                color: "#0dffffff"
-                border.color: "#33ffffff"
-                border.width: 1
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: hiddenSsidInput.text === ""
-                    text: "Network name (SSID)…"
-                    color: "#66ffffff"
-                    font.family: Theme.wifiFont
-                    font.pixelSize: Theme.wifiSmallSize
+                height: 1
+                color: Glass.stroke
+            }
+            Row {
+                width: parent.width
+                height: 31
+                spacing: 2
+                Button {
+                    id: scanButton
+                    width: 100
+                    height: 30
+                    enabled: root.wifiEnabled && !root.busy
+                    contentItem: Text {
+                        text: "Scan Again"
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 11
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 7
+                        color: scanButton.hovered ? Glass.hover : "transparent"
+                    }
+                    onClicked: {
+                        root.scanPause = true;
+                        scanRestart.restart();
+                    }
                 }
-                TextInput {
-                    id: hiddenSsidInput
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Theme.wifiText
-                    selectionColor: "#66ffffff"
-                    font.family: Theme.wifiFont
-                    font.pixelSize: Theme.wifiBodySize
-                    maximumLength: 32
-                    onAccepted: hiddenPwInput.forceActiveFocus()
+                Button {
+                    id: otherButton
+                    width: parent.width - 102
+                    height: 30
+                    enabled: root.wifiEnabled && !root.busy
+                    contentItem: Text {
+                        text: "Join Other Network…"
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 11
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 7
+                        color: otherButton.hovered ? Glass.hover : "transparent"
+                    }
+                    onClicked: root.openSettings()
                 }
             }
-
-            Rectangle {
+            Button {
+                id: settingsButton
                 width: parent.width
-                height: 44
-                radius: Theme.wifiRowRadius
-                color: "#0dffffff"
-                border.color: "#33ffffff"
-                border.width: 1
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: hiddenPwInput.text === ""
-                    text: "Password (leave empty if open)…"
-                    color: "#66ffffff"
-                    font.family: Theme.wifiFont
-                    font.pixelSize: Theme.wifiSmallSize
+                height: 33
+                contentItem: Text {
+                    text: "Network Settings…"
+                    color: Glass.text
+                    font.family: Glass.font
+                    font.pixelSize: 12
+                    verticalAlignment: Text.AlignVCenter
+                    leftPadding: 8
                 }
-                TextInput {
-                    id: hiddenPwInput
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Theme.wifiText
-                    selectionColor: "#66ffffff"
-                    font.family: Theme.wifiFont
-                    font.pixelSize: Theme.wifiBodySize
-                    echoMode: TextInput.Password
-                    onAccepted: root.doConnectHidden(hiddenSsidInput.text, hiddenPwInput.text)
+                background: Rectangle {
+                    radius: 7
+                    color: settingsButton.hovered ? Glass.hover : "transparent"
                 }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 40
-                radius: Theme.wifiRowRadius
-                color: joinMouse.containsMouse ? Theme.wifiRowHover : "#0dffffff"
-                border.color: "#33ffffff"
-                border.width: 1
-                opacity: hiddenSsidInput.text.trim() === "" ? 0.5 : 1
-                Text {
-                    anchors.centerIn: parent
-                    text: "Join"
-                    color: Theme.wifiText
-                    font.family: Theme.wifiFont
-                    font.pixelSize: Theme.wifiBodySize
-                    font.bold: true
-                }
-                MouseArea {
-                    id: joinMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: root.doConnectHidden(hiddenSsidInput.text, hiddenPwInput.text)
-                }
+                onClicked: root.openSettings()
             }
         }
     }

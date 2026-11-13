@@ -31,9 +31,9 @@ Rectangle {
 
     width: Theme.pillWidth
     height: Theme.pillHeight
-    radius: Theme.pillRadius
-    color: Theme.pillBg
-    border.color: Theme.pillBorder
+    radius: height / 2
+    color: Glass.panel
+    border.color: Glass.stroke
     border.width: Theme.pillBorderWidth
 
     Row {
@@ -60,8 +60,8 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width: root.kind === "mic" ? Theme.labelMicWidth : Theme.labelNumWidth
             text: root.label
-            color: Theme.labelColor
-            font.family: Theme.labelFont
+            color: Glass.text
+            font.family: Glass.font
             font.pixelSize: Theme.labelSize
             font.bold: true
         }

@@ -1,843 +1,511 @@
-// Notification history center card (swaync panel replacement).
-// Pure view: history list + dnd flag come via props from shell.qml.
+// Notification Center: grouped cards and widgets on a floating glass sheet.
 pragma ComponentBehavior: Bound
 import QtQuick
-import Quickshell.Services.Mpris
-
 import "../theme"
 
 Rectangle {
     id: root
-    // Fully opaque (alpha stripped from notifBg): rows are only ~5%
-    // white, so any card translucency lets behind-content bleed through
-    // the list. Opaque card keeps rows readable.
-    color: "#141414"
-    // Single continuous morph, same language as the island: every dimension
-    // is a function of `progress` (0 dot → 1 full card), driven by exactly
-    // one animation. Radius blends from a perfect circle into the card
-    // corner — no staged retargets.
-    radius: (1 - root.progress) * Math.min(root.width, root.height) / 2 + root.progress * Theme.notifRadius
-    border.color: Theme.notifBorder
-    border.width: 1
-    clip: true
-
     required property var history
     property bool dnd: false
     property int unread: 0
-
-    signal hideRequested()
-    signal clearRequested()
+    property real progress: 0
+    property bool exiting: false
+    property var expandedGroups: ({})
+    readonly property real frameW: 400
+    readonly property real frameH: 700
+    signal hideRequested
+    signal clearRequested
     signal removeRequested(int index)
     signal removeGroupRequested(string appKey)
-    signal dndToggled()
+    signal dndToggled
 
-    // Active media player (swaync `mpris` widget parity): prefer the
-    // playing player, else the first one advertising a track. Null when
-    // nothing is available — the card below collapses to height 0.
-    readonly property var mprisPlayers: Mpris.players.values
-    readonly property var activePlayer: {
-        var ps = root.mprisPlayers;
-        var fallback = null;
-        for (var i = 0; i < ps.length; i++) {
-            var p = ps[i];
-            if (!p)
-                continue;
-            if (p.isPlaying)
-                return p;
-            if (fallback === null && p.trackTitle !== "")
-                fallback = p;
-        }
-        return fallback !== null ? fallback : (ps.length > 0 ? ps[0] : null);
+    color: Glass.panel
+    radius: Glass.radius
+    border.width: 1
+    border.color: Glass.stroke
+    clip: true
+    opacity: progress
+    transform: Translate {
+        x: (1 - root.progress) * 48
     }
-    readonly property bool hasMedia: root.activePlayer !== null && root.activePlayer.trackTitle !== ""
+    focus: true
 
-    // App-grouped view of history: newest group first, newest item first
-    // within each group. Expanded/collapsed state lives here (keyed by
-    // lowercase app name) so it survives history updates.
-    property var expandedGroups: ({})
+    function open(): void {
+        exiting = false;
+        entrance.to = 1;
+        entrance.start();
+        calendar.refresh();
+        forceActiveFocus();
+    }
+    function close(): void {
+        if (exiting)
+            return;
+        exiting = true;
+        entrance.to = 0;
+        entrance.start();
+    }
+    function toggleGroup(key): void {
+        var next = Object.assign({}, expandedGroups);
+        next[key] = !next[key];
+        expandedGroups = next;
+    }
+    function invokeDefault(h): void {
+        if (!h || !h.note)
+            return;
+        var actions = h.note.actions;
+        for (var i = 0; i < actions.length; i++) {
+            if (actions[i].identifier === "default") {
+                actions[i].invoke();
+                close();
+                return;
+            }
+        }
+    }
     readonly property var groups: {
-        var out = [];
-        for (var i = 0; i < root.history.length; i++) {
-            var h = root.history[i];
-            var key = (((h && h.app) || "Notification") + "").toLowerCase();
-            var gi = -1;
-            for (var j = 0; j < out.length; j++) {
-                if (out[j].key === key) {
-                    gi = j;
+        var output = [];
+        for (var i = 0; i < history.length; i++) {
+            var h = history[i];
+            var key = ((h.app || "Notification") + "").toLowerCase();
+            var group = null;
+            for (var j = 0; j < output.length; j++) {
+                if (output[j].key === key) {
+                    group = output[j];
                     break;
                 }
             }
-            if (gi < 0) {
-                out.push({
+            if (group === null) {
+                group = {
                     key: key,
-                    app: (h && h.app) || "Notification",
-                    items: [i]
-                });
-            } else {
-                out[gi].items.push(i);
+                    app: h.app || "Notification",
+                    items: []
+                };
+                output.push(group);
             }
+            group.items.push(i);
         }
-        return out;
-    }
-
-    function toggleGroup(key: string): void {
-        var e = Object.assign({}, root.expandedGroups);
-        e[key] = !e[key];
-        root.expandedGroups = e;
-    }
-
-    // 0 = dot, 1 = full card. Animated once per open (OutExpo: fast
-    // expansion, soft landing — the Dynamic Island feel).
-    property real progress: 0
-    property bool exiting: false
-
-    readonly property real frameW: Theme.centerDot + (Theme.centerWidth - Theme.centerDot) * root.progress
-    readonly property real frameH: Theme.centerDot + (Theme.centerHeight - Theme.centerDot) * root.progress
-    // Contents fade in over the final stretch of the morph only.
-    readonly property real contentOpacity: Math.min(1, Math.max(0, (root.progress - 0.8) / 0.2))
-
-    function open(): void {
-        morphOut.stop();
-        root.exiting = false;
-        morphIn.start();
-        root.forceActiveFocus();
-    }
-
-    function close(): void {
-        if (root.exiting)
-            return;
-        root.exiting = true;
-        morphIn.stop();
-        morphOut.start();
-    }
-
-    // The one and only morph driver. Entry: fast continuous expansion;
-    // exit: quick shrink, then the shell hides the window.
-    NumberAnimation {
-        id: morphIn
-        target: root
-        property: "progress"
-        from: 0
-        to: 1
-        duration: 650
-        easing.type: Easing.OutExpo
+        return output;
     }
     NumberAnimation {
-        id: morphOut
+        id: entrance
         target: root
         property: "progress"
-        to: 0
-        duration: 220
-        easing.type: Easing.InCubic
-        onFinished: {
+        duration: 240
+        easing.type: Easing.OutCubic
+        onFinished: if (root.exiting) {
             root.exiting = false;
             root.hideRequested();
         }
     }
-
-    Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_Escape) {
-            root.close();
-            event.accepted = true;
-        }
-    }
-
-    // Swallow card clicks so the backdrop never fires from inside.
+    Keys.onEscapePressed: close()
+    // Consume inside clicks; the shell owns the outside-click backdrop.
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
         onClicked: {}
     }
 
-    // ---- morph start: bare pulsing dot, dissolves as expansion begins ----
-    // Outer fades with progress; inner runs the pulse loop so the two
-    // opacity drivers never fight over one property.
-    Item {
-        anchors.centerIn: parent
-        width: 8
-        height: 8
-        opacity: 1 - Math.min(1, root.progress * 4)
-        visible: opacity > 0
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 4
-            color: Theme.notifAccent
-
-            SequentialAnimation on opacity {
-                loops: Animation.Infinite
-                running: root.progress < 0.3
-                NumberAnimation {
-                    to: 0.3
-                    duration: 900
-                    easing.type: Easing.InOutQuad
-                }
-                NumberAnimation {
-                    to: 1
-                    duration: 900
-                    easing.type: Easing.InOutQuad
-                }
-            }
-        }
-    }
-
     Column {
-        id: cardView
         anchors.fill: parent
-        anchors.margins: Theme.notifPadding
-        spacing: 8
-        opacity: root.contentOpacity
-        enabled: root.progress > 0.85
-        visible: opacity > 0
-
-        // Header
+        anchors.margins: 18
+        spacing: 14
         Item {
             width: parent.width
-            height: 30
+            height: 32
             Text {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.unread > 0 ? "Notifications  (" + root.unread + " new)" : "Notifications"
-                color: Theme.notifText
-                font.family: Theme.notifFont
-                font.pixelSize: Theme.notifTitleSize
-                font.bold: true
+                text: "Notification Center"
+                color: Glass.text
+                font.family: Glass.font
+                font.pixelSize: 17
+                font.weight: Font.DemiBold
             }
-            Row {
+            Rectangle {
                 anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 10
-                // DND toggle pill
-                Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 76
-                    height: 26
-                    radius: 13
-                    color: root.dnd ? "#3a8cff" : "#0dffffff"
-                    border.color: Theme.notifBorder
-                    border.width: 1
-                    Text {
-                        anchors.centerIn: parent
-                        text: root.dnd ? "DND on" : "DND"
-                        color: Theme.notifText
-                        font.family: Theme.notifFont
-                        font.pixelSize: Theme.notifSmallSize
-                        font.bold: true
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: root.dndToggled()
-                    }
-                }
+                width: 28
+                height: 28
+                radius: 14
+                color: closeHover.containsMouse ? Glass.hover : Glass.card
                 Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: root.history.length > 0
-                    text: "Clear all"
-                    color: clearHover.containsMouse ? Theme.notifText : Theme.notifDim
-                    font.family: Theme.notifFont
-                    font.pixelSize: Theme.notifSmallSize
-                    MouseArea {
-                        id: clearHover
-                        anchors.fill: parent
-                        anchors.margins: -6
-                        hoverEnabled: true
-                        onClicked: root.clearRequested()
-                    }
+                    anchors.centerIn: parent
+                    text: "×"
+                    color: Glass.secondary
+                    font.pixelSize: 20
                 }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "✕"
-                    color: closeHover.containsMouse ? Theme.notifText : Theme.notifDim
-                    font.family: Theme.notifFont
-                    font.pixelSize: 14
-                    MouseArea {
-                        id: closeHover
-                        anchors.fill: parent
-                        anchors.margins: -8
-                        hoverEnabled: true
-                        onClicked: root.close()
-                    }
+                MouseArea {
+                    id: closeHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: root.close()
                 }
             }
         }
-
         Rectangle {
             width: parent.width
-            height: 1
-            color: Theme.notifDivider
-        }
-
-        // ---- now-playing (swaync `mpris` parity) ----
-        // Full player card: album art + title/artist + transport controls.
-        // Collapses to height 0 when no player advertises a track, and the
-        // list below reclaims the space via mediaWrap.height.
-        Item {
-            id: mediaWrap
-            width: parent.width
-            height: root.hasMedia ? 96 : 0
-            visible: height > 0.5 || mediaCard.opacity > 0.01
-            clip: true
-            Behavior on height {
-                NumberAnimation {
-                    duration: 250
-                    easing.type: Easing.OutCubic
+            height: 50
+            radius: 16
+            color: Glass.card
+            Row {
+                anchors.left: parent.left
+                anchors.leftMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
+                Text {
+                    text: "☾"
+                    color: root.dnd ? Glass.accent : Glass.text
+                    font.pixelSize: 23
                 }
-            }
-
-            Rectangle {
-                id: mediaCard
-                width: parent.width
-                // Fixed card height; the wrapper animates 0 <-> card.
-                height: 96
-                radius: 12
-                color: "#202020"
-                border.color: Theme.notifBorder
-                border.width: 1
-                clip: true
-                opacity: root.hasMedia ? 1 : 0
-                Behavior on opacity {
-                    NumberAnimation {
-                        duration: 250
-                        easing.type: Easing.OutCubic
-                    }
-                }
-
-                Row {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
-
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 72
-                        height: 72
-                        radius: 8
-                        color: "#141414"
-                        clip: true
-                        visible: root.hasMedia
-
-                        Image {
-                            anchors.fill: parent
-                            source: root.hasMedia ? (root.activePlayer.trackArtUrl || "") : ""
-                            asynchronous: true
-                            fillMode: Image.PreserveAspectCrop
-                            visible: status !== Image.Error && status !== Image.Null
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            visible: !root.hasMedia || (root.activePlayer && (root.activePlayer.trackArtUrl || "") === "")
-                            text: "♪"
-                            color: Theme.notifDim
-                            font.pixelSize: 28
-                        }
-                    }
-
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 72 - 12 - 96
-                        spacing: 2
-
-                        Text {
-                            width: parent.width
-                            elide: Text.ElideRight
-                            text: root.hasMedia ? (root.activePlayer.identity || "Music").toUpperCase() + (root.activePlayer.isPlaying ? "  ·  PLAYING" : "  ·  PAUSED") : ""
-                            color: Theme.notifDim
-                            font.family: Theme.notifFont
-                            font.pixelSize: Theme.notifSmallSize
-                            font.bold: true
-                        }
-                        Text {
-                            width: parent.width
-                            elide: Text.ElideRight
-                            text: root.hasMedia ? root.activePlayer.trackTitle : ""
-                            color: Theme.notifText
-                            font.family: Theme.notifFont
-                            font.pixelSize: Theme.notifTitleSize
-                            font.bold: true
-                        }
-                        Text {
-                            width: parent.width
-                            elide: Text.ElideRight
-                            maximumLineCount: 1
-                            text: root.hasMedia ? ([root.activePlayer.trackArtist, root.activePlayer.trackAlbum].filter(function(s) {
-                                return s !== "";
-                            }).join(" — ")) : ""
-                            color: Theme.notifDim
-                            font.family: Theme.notifFont
-                            font.pixelSize: Theme.notifBodySize
-                        }
-                    }
-
-                    Row {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 96
-                        spacing: 4
-
-                        Item {
-                            width: 28
-                            height: 40
-                            Text {
-                                anchors.centerIn: parent
-                                text: "⏮"
-                                color: (root.hasMedia && root.activePlayer.canGoPrevious) ? Theme.notifText : Theme.notifLow
-                                font.pixelSize: 18
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: root.hasMedia && root.activePlayer.canGoPrevious
-                                onClicked: root.activePlayer.previous()
-                            }
-                        }
-                        Item {
-                            width: 32
-                            height: 40
-                            Text {
-                                anchors.centerIn: parent
-                                text: (root.hasMedia && root.activePlayer.isPlaying) ? "⏸" : "▶"
-                                color: Theme.notifText
-                                font.pixelSize: 20
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: root.hasMedia
-                                onClicked: root.activePlayer.togglePlaying()
-                            }
-                        }
-                        Item {
-                            width: 28
-                            height: 40
-                            Text {
-                                anchors.centerIn: parent
-                                text: "⏭"
-                                color: (root.hasMedia && root.activePlayer.canGoNext) ? Theme.notifText : Theme.notifLow
-                                font.pixelSize: 18
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: root.hasMedia && root.activePlayer.canGoNext
-                                onClicked: root.activePlayer.next()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Empty state
-        Text {
-            width: parent.width
-            visible: root.history.length === 0
-            horizontalAlignment: Text.AlignHCenter
-            topPadding: 60
-            text: root.dnd ? "Do Not Disturb is on.\nNew notifications wait here quietly." : "All caught up.\nNew notifications land here."
-            color: Theme.notifDim
-            font.family: Theme.notifFont
-            font.pixelSize: Theme.notifBodySize
-        }
-
-        ListView {
-            width: parent.width
-            // Header (30) + divider (1) + column gaps. With media visible the
-            // column holds 4 items (3 gaps = 24); without, 3 items (2 gaps).
-            height: parent.height - 30 - 1 - mediaWrap.height - (root.hasMedia ? 24 : 16)
-            visible: root.history.length > 0
-            clip: true
-            spacing: 12
-            displaced: Transition {
-                // Short: followers ride an expanding stack's height
-                // frame-synchronously instead of trailing it. Still long
-                // enough to glide on insert/remove jumps.
-                NumberAnimation {
-                    properties: "y"
-                    duration: 150
-                    easing.type: Easing.OutCubic
-                }
-            }
-            model: root.groups
-            // One group per app: singles render exactly like before; multi
-            // stacks show the latest card with older cards peeking behind
-            // (macOS style), click fans out to the full list.
-            delegate: Item {
-                id: groupRoot
-                required property var modelData
-                required property int index
-                width: ListView.view.width
-                height: cardsCol.implicitHeight + groupRoot.peekExtra
-                // No Behavior here: the wrapper heights below already
-                // animate, so this tracks the fan frame-synchronously.
-                // A Behavior would chase the moving target (double lag)
-                // and let expanding cards paint past the lagging delegate
-                // bounds over the follower below.
-
-                readonly property string gkey: modelData.key
-                readonly property string gapp: modelData.app
-                readonly property var gflats: modelData.items
-                readonly property bool gopen: !!root.expandedGroups[modelData.key]
-                readonly property bool isStack: gflats.length > 1 && !gopen
-                readonly property bool showHeader: gflats.length > 1 && gopen
-                // Fan followers: the peek strips ARE cards 2 and 3 unfolding.
-                // Each tracks its card wrapper's expand ratio (0 tucked → 1
-                // fanned) plus that card's live slot and height, so the strip
-                // glides from behind the top card into its notification's
-                // place instead of crossfading away. Pure followers — the
-                // wrappers drive, so no Behaviors here and no feedback loops
-                // (nothing below feeds back into the Column layout).
-                readonly property real kFar: (cardsRep.count > 2 && cardsRep.itemAt(2)) ? cardsRep.itemAt(2).expandRatio : 0
-                readonly property real kNear: (cardsRep.count > 1 && cardsRep.itemAt(1)) ? cardsRep.itemAt(1).expandRatio : 0
-                readonly property real slotFar: (cardsRep.count > 2 && cardsRep.itemAt(2)) ? cardsRep.itemAt(2).y + cardsRep.itemAt(2).gapAbove : 0
-                readonly property real slotNear: (cardsRep.count > 1 && cardsRep.itemAt(1)) ? cardsRep.itemAt(1).y + cardsRep.itemAt(1).gapAbove : 0
-                readonly property real cardFarH: (cardsRep.count > 2 && cardsRep.itemAt(2)) ? cardsRep.itemAt(2).cardH : 0
-                readonly property real cardNearH: (cardsRep.count > 1 && cardsRep.itemAt(1)) ? cardsRep.itemAt(1).cardH : 0
-                // Tucked overhang below the top card; shrinks to zero as the
-                // cards take their slots.
-                readonly property real peekExtra: gflats.length > 2 ? 14 * (1 - groupRoot.kFar) : (gflats.length > 1 ? 7 * (1 - groupRoot.kNear) : 0)
-
-                // Peek cards tucked behind the top card (painted first =
-                // bottom). Full card-sized layers nudged down, so only a
-                // rounded strip shows below the top card — never a floating
-                // sliver poking past the card's corners.
-                // Solid fills: the top card is opaque, and translucent peeks
-                // would ghost through it — same for the rows.
-                Rectangle {
-                    id: peekFar
-                    visible: groupRoot.gflats.length > 2 && opacity > 0.01
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: 14 * (1 - groupRoot.kFar) + groupRoot.slotFar * groupRoot.kFar
-                    width: parent.width - 32 * (1 - groupRoot.kFar)
-                    height: groupRoot.cardFarH
-                    opacity: 1 - groupRoot.kFar
-                    radius: 12
-                    color: "#202020"
-                    border.color: Theme.notifBorder
-                    border.width: 1
-                }
-                Rectangle {
-                    id: peekNear
-                    visible: groupRoot.gflats.length > 1 && opacity > 0.01
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: 7 * (1 - groupRoot.kNear) + groupRoot.slotNear * groupRoot.kNear
-                    width: parent.width - 16 * (1 - groupRoot.kNear)
-                    height: groupRoot.cardNearH
-                    opacity: 1 - groupRoot.kNear
-                    radius: 12
-                    color: "#202020"
-                    border.color: Theme.notifBorder
-                    border.width: 1
-                }
-
-                // Gaps live inside each wrapper's height (not Column
-                // spacing) so the 8px gaps fan with the cards instead of
-                // snapping.
                 Column {
-                    id: cardsCol
-                    width: parent.width
-                    spacing: 0
-
-                    // Expanded group header: app + count, collapse, drop all.
-                    // Wrapper carries the 8px gap below the header in its
-                    // height. Leads on expand, trails the cards on collapse.
-                    Item {
-                        width: parent.width
-                        height: groupRoot.showHeader ? 36 : 0
-                        opacity: groupRoot.showHeader ? 1 : 0
-                        visible: groupRoot.showHeader ? true : (height > 0.5 || opacity > 0.01)
-                        clip: true
-                        Behavior on height {
-                            SequentialAnimation {
-                                PauseAnimation {
-                                    duration: groupRoot.showHeader ? 0 : groupRoot.gflats.length * 35
-                                }
-                                NumberAnimation {
-                                    duration: 320
-                                    easing.type: Easing.OutCubic
-                                }
-                            }
+                    Text {
+                        text: "Do Not Disturb"
+                        color: Glass.text
+                        font.family: Glass.font
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        text: root.dnd ? "Notifications delivered quietly" : "Allow notifications"
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 10
+                    }
+                }
+            }
+            Rectangle {
+                anchors.right: parent.right
+                anchors.rightMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                width: 34
+                height: 20
+                radius: 10
+                color: root.dnd ? Glass.accent : "#65708090"
+                Rectangle {
+                    width: 16
+                    height: 16
+                    radius: 8
+                    y: 2
+                    x: root.dnd ? 16 : 2
+                    color: "white"
+                    Behavior on x {
+                        NumberAnimation {
+                            duration: 150
+                            easing.type: Easing.OutCubic
                         }
-                        Behavior on opacity {
+                    }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.dndToggled()
+            }
+        }
+        Flickable {
+            id: notificationList
+            width: parent.width
+            height: Math.max(0, parent.height - 124 - calendar.height)
+            contentHeight: contents.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            Column {
+                id: contents
+                width: parent.width
+                spacing: 14
+                Item {
+                    width: parent.width
+                    height: 24
+                    Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Notifications"
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Clear All"
+                        visible: root.history.length > 0
+                        color: clearHover.containsMouse ? Glass.text : Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 12
+                        MouseArea {
+                            id: clearHover
+                            anchors.fill: parent
+                            anchors.margins: -5
+                            hoverEnabled: true
+                            onClicked: root.clearRequested()
+                        }
+                    }
+                }
+                Rectangle {
+                    width: parent.width
+                    height: 74
+                    radius: 18
+                    color: Glass.card
+                    visible: root.history.length === 0
+                    Text {
+                        anchors.centerIn: parent
+                        text: "No Notifications"
+                        color: Glass.secondary
+                        font.family: Glass.font
+                        font.pixelSize: 14
+                    }
+                }
+                Repeater {
+                    model: root.groups
+                    delegate: Item {
+                        id: group
+                        required property var modelData
+                        width: contents.width
+                        readonly property bool expanded: !!root.expandedGroups[modelData.key]
+                        readonly property bool stacked: modelData.items.length > 1 && !expanded
+                        property real expansion: expanded ? 1 : 0
+                        readonly property real firstHeight: entries.count && entries.itemAt(0) ? entries.itemAt(0).height : 0
+                        readonly property real expandedHeight: {
+                            let total = 0;
+                            for (let i = 0; i < entries.count; i++) {
+                                const item = entries.itemAt(i);
+                                if (item) total += item.height + (i ? 7 : 0);
+                            }
+                            return total;
+                        }
+                        height: groupTitle.height + 7 * expansion + firstHeight
+                                + (expandedHeight - firstHeight) * expansion
+                                + (modelData.items.length > 1 ? 10 * (1 - expansion) : 0)
+                        Behavior on expansion {
                             NumberAnimation {
-                                duration: 250
+                                duration: 360
                                 easing.type: Easing.OutCubic
                             }
                         }
-                    Rectangle {
-                        width: parent.width
-                        height: 28
-                        radius: 12
-                        color: "transparent"
                         Item {
-                            anchors.fill: parent
-                            anchors.leftMargin: 14
-                            anchors.rightMargin: 14
+                            id: groupTitle
+                            width: parent.width
+                            height: group.modelData.items.length > 1 ? 22 * group.expansion : 0
+                            opacity: group.expansion
+                            visible: height > 0
+                            enabled: group.expanded
                             Text {
                                 anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: (groupRoot.gapp || "Notification").toUpperCase() + "  ·  " + groupRoot.gflats.length
-                                color: Theme.notifDim
-                                font.family: Theme.notifFont
-                                font.pixelSize: Theme.notifSmallSize
-                                font.bold: true
+                                textFormat: Text.PlainText
+                                text: group.modelData.app
+                                color: Glass.secondary
+                                font.family: Glass.font
+                                font.pixelSize: 11
                             }
                             Text {
-                                anchors.right: gCloseText.left
-                                anchors.rightMargin: 10
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "Collapse"
-                                color: collapseHover.containsMouse ? Theme.notifText : Theme.notifDim
-                                font.family: Theme.notifFont
-                                font.pixelSize: Theme.notifSmallSize
-                                MouseArea {
-                                    id: collapseHover
-                                    anchors.fill: parent
-                                    anchors.margins: -6
-                                    hoverEnabled: true
-                                    onClicked: root.toggleGroup(groupRoot.gkey)
-                                }
-                            }
-                            Text {
-                                id: gCloseText
                                 anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "✕"
-                                color: gCloseHover.containsMouse ? Theme.notifText : Theme.notifDim
-                                font.family: Theme.notifFont
-                                font.pixelSize: 12
+                                text: "Show Less"
+                                color: Glass.secondary
+                                font.family: Glass.font
+                                font.pixelSize: 11
                                 MouseArea {
-                                    id: gCloseHover
                                     anchors.fill: parent
-                                    anchors.margins: -8
-                                    hoverEnabled: true
-                                    onClicked: root.removeGroupRequested(groupRoot.gkey)
+                                    anchors.margins: -4
+                                    onClicked: root.toggleGroup(group.modelData.key)
                                 }
                             }
                         }
-                        }
-                    }
-
-                    Repeater {
-                        id: cardsRep
-                        model: groupRoot.gflats
-                        // Wrapper carries the 8px gap above the card in its
-                        // height so gaps fan with the cards. All flats stay
-                        // instantiated — i > 0 collapse to height 0 instead
-                        // of being destroyed — so both directions animate.
-                        // Expand cascades top-down, collapse tucks
-                        // bottom-first.
-                        delegate: Item {
-                            id: cardWrap
-                            required property int modelData
-                            required property int index
-                            readonly property int flat: modelData
-                            readonly property bool isFirst: index === 0
-                            readonly property bool hidden: groupRoot.isStack && index > 0
-                            readonly property int gapAbove: isFirst ? 0 : 8
-                            readonly property int fanDelay: hidden ? (cardsRep.count - 1 - index) * 35 : index * 35
-                            // Live unfold state for the peek followers above:
-                            // card content height (stable) and 0-tucked →
-                            // 1-fanned ratio of this wrapper.
-                            readonly property real cardH: cardRect.height
-                            readonly property real expandRatio: height / Math.max(1, cardH + gapAbove)
-                            width: groupRoot.width
-                            height: cardWrap.hidden ? 0 : cardRect.height + cardWrap.gapAbove
-                            opacity: cardWrap.hidden ? 0 : 1
-                            visible: !cardWrap.hidden || height > 0.5 || opacity > 0.01
-                            clip: true
-                            Behavior on height {
-                                SequentialAnimation {
-                                    PauseAnimation {
-                                        duration: cardWrap.fanDelay
+                        Repeater {
+                            id: entries
+                            model: group.modelData.items
+                            delegate: Item {
+                                id: entry
+                                required property int index
+                                required property int modelData
+                                readonly property var h: root.history[modelData] || ({})
+                                readonly property bool stack: group.stacked
+                                readonly property real expandedY: {
+                                    let offset = 0;
+                                    for (let i = 0; i < index; i++) {
+                                        const previous = entries.itemAt(i);
+                                        if (previous) offset += previous.height + 7;
                                     }
-                                    NumberAnimation {
-                                        duration: 340
-                                        easing.type: Easing.OutCubic
+                                    return offset;
+                                }
+                                x: Math.min(index, 2) * 6 * (1 - group.expansion)
+                                y: groupTitle.height + 7 * group.expansion
+                                   + Math.min(index, 2) * 5 * (1 - group.expansion)
+                                   + expandedY * group.expansion
+                                width: group.width - x * 2
+                                height: card.height
+                                opacity: index < 3 ? 1 : group.expansion
+                                visible: opacity > 0
+                                enabled: index === 0 || group.expanded
+                                z: group.modelData.items.length - index
+                                Rectangle {
+                                    id: card
+                                    width: parent.width
+                                    height: entry.index === 0 ? Math.max(76, row.implicitHeight + 24)
+                                            : group.firstHeight * (1 - group.expansion)
+                                              + Math.max(76, row.implicitHeight + 24) * group.expansion
+                                    Behavior on height {
+                                        enabled: entry.index === 0 && root.visible && group.expansion > 0
+                                        NumberAnimation { duration: 360; easing.type: Easing.OutCubic }
+                                    }
+                                    radius: 18
+                                    color: cardHover.containsMouse ? "#f0404248"
+                                           : entry.index > 0 && group.expansion < 1 ? "#ee454950" : "#ee303238"
+                                    Behavior on color { ColorAnimation { duration: 220 } }
+                                    border.color: Glass.stroke
+                                    border.width: 1
+                                    MouseArea {
+                                        id: cardHover
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        onClicked: entry.stack ? root.toggleGroup(group.modelData.key) : root.invokeDefault(entry.h)
+                                    }
+                                    Row {
+                                        id: row
+                                        opacity: entry.index === 0 ? 1 : group.expansion
+                                        x: 12
+                                        y: 12
+                                        width: parent.width - 24
+                                        spacing: 10
+                                        Rectangle {
+                                            width: 36
+                                            height: 36
+                                            radius: 9
+                                            color: "#535863"
+                                            Image {
+                                                id: artwork
+                                                anchors.fill: parent
+                                                source: entry.h.img || ""
+                                                fillMode: Image.PreserveAspectFit
+                                                visible: status === Image.Ready
+                                            }
+                                            Text {
+                                                anchors.centerIn: parent
+                                                visible: !artwork.visible
+                                                text: (entry.h.app || "N").charAt(0).toUpperCase()
+                                                font.family: Glass.font
+                                                font.pixelSize: 18
+                                                font.weight: Font.DemiBold
+                                                color: Glass.text
+                                            }
+                                        }
+                                        Column {
+                                            width: parent.width - 46
+                                            spacing: 3
+                                            Item {
+                                                width: parent.width
+                                                height: 15
+                                                Text {
+                                                    width: parent.width - 70
+                                                    elide: Text.ElideRight
+                                                    text: entry.h.app || "Notification"
+                                                    textFormat: Text.PlainText
+                                                    color: Glass.secondary
+                                                    font.family: Glass.font
+                                                    font.pixelSize: 10
+                                                    font.weight: Font.DemiBold
+                                                }
+                                                Text {
+                                                    anchors.right: parent.right
+                                                    text: entry.stack ? group.modelData.items.length + " notifications" : (entry.h.stamp || "now")
+                                                    color: Glass.secondary
+                                                    font.family: Glass.font
+                                                    font.pixelSize: 10
+                                                }
+                                            }
+                                            Text {
+                                                width: parent.width
+                                                text: entry.h.summary || ""
+                                                textFormat: Text.PlainText
+                                                color: Glass.text
+                                                font.family: Glass.font
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
+                                                wrapMode: Text.Wrap
+                                                maximumLineCount: 2
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                width: parent.width
+                                                text: entry.h.body || ""
+                                                textFormat: Text.PlainText
+                                                visible: text !== ""
+                                                color: Glass.text
+                                                font.family: Glass.font
+                                                font.pixelSize: 12
+                                                wrapMode: Text.Wrap
+                                                maximumLineCount: group.expanded ? 12 : 3
+                                                elide: Text.ElideRight
+                                            }
+                                            Flow {
+                                                width: parent.width
+                                                spacing: 4
+                                                visible: !entry.stack
+                                                Repeater {
+                                                    model: entry.h.note ? entry.h.note.actions : []
+                                                    delegate: Rectangle {
+                                                        id: action
+                                                        required property var modelData
+                                                        visible: modelData.identifier !== "default"
+                                                        width: visible ? Math.min(actionLabel.implicitWidth + 20, 230) : 0
+                                                        height: visible ? 26 : 0
+                                                        radius: 8
+                                                        color: actionHover.containsMouse ? Glass.hover : Glass.card
+                                                        Text {
+                                                            id: actionLabel
+                                                            anchors.centerIn: parent
+                                                            width: Math.min(implicitWidth, 210)
+                                                            elide: Text.ElideRight
+                                                            text: action.modelData.text
+                                                            textFormat: Text.PlainText
+                                                            color: Glass.text
+                                                            font.family: Glass.font
+                                                            font.pixelSize: 11
+                                                        }
+                                                        MouseArea {
+                                                            id: actionHover
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            onClicked: {
+                                                                action.modelData.invoke();
+                                                                root.close();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Rectangle {
+                                        x: 4
+                                        y: 4
+                                        width: 22
+                                        height: 22
+                                        radius: 11
+                                        color: "#6c6e74"
+                                        visible: (entry.index === 0 || group.expanded)
+                                                 && (cardHover.containsMouse || dismissHover.containsMouse)
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "×"
+                                            color: "white"
+                                            font.pixelSize: 17
+                                        }
+                                        MouseArea {
+                                            id: dismissHover
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            onClicked: entry.stack ? root.removeGroupRequested(group.modelData.key) : root.removeRequested(entry.modelData)
+                                        }
                                     }
                                 }
                             }
-                            Behavior on opacity {
-                                SequentialAnimation {
-                                    PauseAnimation {
-                                        duration: cardWrap.fanDelay
-                                    }
-                                    NumberAnimation {
-                                        duration: 260
-                                        easing.type: Easing.OutCubic
-                                    }
-                                }
-                            }
-                        Rectangle {
-                            id: cardRect
-                            y: cardWrap.gapAbove
-                            readonly property var h: (cardWrap.flat >= 0 && cardWrap.flat < root.history.length) ? root.history[cardWrap.flat] : null
-                            readonly property string app: h ? (h.app || "Notification") : "Notification"
-                            readonly property string summary: h ? h.summary : ""
-                            readonly property string body: h ? h.body : ""
-                            readonly property string stamp: h ? h.stamp : ""
-                            readonly property bool stackTop: groupRoot.isStack
-                            width: groupRoot.width
-                            height: itemRow.implicitHeight + 28
-                            radius: 12
-                            // Solid equivalents of hover/rowBg over the opaque
-                            // card (both were translucent and let stacked peeks
-                            // ghost through the top card).
-                            color: delHover.containsMouse ? "#262626" : "#202020"
-                            border.color: Theme.notifBorder
-                            border.width: 1
-                            clip: true
-
-                            readonly property string imgSrc: {
-                                var p = h ? (h.img || "") : "";
-                                if (p === "")
-                                    return "";
-                                return p.indexOf("://") >= 0 ? p : "file://" + p;
-                            }
-
-                            // Row hover layer FIRST (bottom of stacking) so it never
-                            // swallows presses meant for the close button.
-                            // Clicking a peeked stack fans it out.
-                            MouseArea {
-                                id: delHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onPressed: notifState.log("row press flat=" + cardWrap.flat)
-                                onClicked: {
-                                    if (cardRect.stackTop)
-                                        root.toggleGroup(groupRoot.gkey);
-                                }
-                            }
-
-                Row {
-                    id: itemRow
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
-                    anchors.topMargin: 14
-                    spacing: 8
-
-                    Rectangle {
-                        anchors.top: parent.top
-                        width: visible ? 36 : 0
-                        height: 36
-                        radius: 8
-                        color: "transparent"
-                        clip: true
-                        visible: cardRect.imgSrc !== "" && itemImg.status !== Image.Error
-
-                        Image {
-                            id: itemImg
-                            anchors.fill: parent
-                            source: cardRect.imgSrc
-                            asynchronous: true
-                            fillMode: Image.PreserveAspectCrop
-                        }
-                    }
-
-                    Column {
-                        width: parent.width - (cardRect.imgSrc !== "" ? 44 : 0)
-                        spacing: 10
-
-                    // Header: app + count + stamp + close on one baseline.
-                    // Plain Item (never a Row) so every child can use real
-                    // anchors — anchors inside a positioner break geometry.
-                    Item {
-                        width: parent.width
-                        height: 18
-                        Text {
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 40 - 16 - 12 - (cardRect.stackTop ? 30 : 0)
-                            elide: Text.ElideRight
-                            text: cardRect.app.toUpperCase()
-                            color: Theme.notifDim
-                            font.family: Theme.notifFont
-                            font.pixelSize: Theme.notifSmallSize
-                            font.bold: true
-                        }
-                        Rectangle {
-                            visible: cardRect.stackTop
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.right: stampText.left
-                            anchors.rightMargin: 6
-                            width: visible ? 24 : 0
-                            height: 18
-                            radius: 9
-                            color: "#1effffff"
-                            Text {
-                                anchors.centerIn: parent
-                                text: groupRoot.gflats.length
-                                color: Theme.notifText
-                                font.family: Theme.notifFont
-                                font.pixelSize: Theme.notifSmallSize
-                                font.bold: true
-                            }
-                        }
-                        Text {
-                            id: stampText
-                            anchors.right: xText.left
-                            anchors.rightMargin: 6
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 40
-                            horizontalAlignment: Text.AlignRight
-                            text: cardRect.stamp
-                            color: "#66ffffff"
-                            font.family: Theme.notifFont
-                            font.pixelSize: Theme.notifSmallSize
-                        }
-                        Text {
-                            id: xText
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 16
-                            horizontalAlignment: Text.AlignHCenter
-                            text: "✕"
-                            color: delXHover.containsMouse ? Theme.notifText : "#66ffffff"
-                            font.family: Theme.notifFont
-                            font.pixelSize: 12
-                            MouseArea {
-                                id: delXHover
-                                anchors.fill: parent
-                                anchors.margins: -8
-                                hoverEnabled: true
-                                onPressed: notifState.log("x press flat=" + cardWrap.flat)
-                                onClicked: {
-                                    if (cardRect.stackTop)
-                                        root.removeGroupRequested(groupRoot.gkey);
-                                    else
-                                        root.removeRequested(cardWrap.flat);
-                                }
-                            }
-                        }
-                    }
-                    Text {
-                        width: parent.width
-                        visible: text !== ""
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                        text: cardRect.summary
-                        color: Theme.notifText
-                        font.family: Theme.notifFont
-                        font.pixelSize: Theme.notifTitleSize
-                        font.bold: true
-                    }
-                    Text {
-                        width: parent.width
-                        visible: text !== ""
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 3
-                        elide: Text.ElideRight
-                        text: cardRect.body
-                        color: Theme.notifDim
-                        font.family: Theme.notifFont
-                        font.pixelSize: Theme.notifBodySize
-                    }
-                    }
-                }
-                        }
                         }
                     }
                 }
             }
+        }
+        CalendarWidget {
+            id: calendar
+            width: parent.width
+            height: implicitHeight
         }
     }
 }
