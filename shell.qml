@@ -498,7 +498,7 @@ ShellRoot {
         anchors { top: true; left: page === "island"; right: true }
         margins { top: page === "island" ? Theme.islandTopMargin : 36; right: page === "island" ? 0 : 10 }
         implicitWidth: Math.min(screen ? screen.width - 20 : 400, Math.ceil(current.frameW))
-        implicitHeight: Math.min(screen ? screen.height - 48 : 700, Math.ceil(current.frameH) + (back.visible ? 32 : 0))
+        implicitHeight: Math.min(screen ? screen.height - 48 : Math.ceil(current.frameH), Math.ceil(current.frameH) + (back.visible ? 32 : 0))
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
         visible: false

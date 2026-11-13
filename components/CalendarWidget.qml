@@ -1,14 +1,16 @@
 // Shared calendar widget for the date popup and Notification Center.
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../theme"
 
 Rectangle {
     id: root
+    property bool compact: false
     implicitWidth: 364
-    implicitHeight: 350
+    implicitHeight: compact ? 288 : 350
     radius: 20
-    color: "#d92b2b30"
-    border.color: "#24ffffff"
+    color: Qt.tint(Theme.islandBg, Theme.notifRowBg)
+    border.color: Theme.islandBorder
     border.width: 1
 
     property date now: new Date()
@@ -67,30 +69,30 @@ Rectangle {
 
     Column {
         anchors.fill: parent
-        anchors.margins: 18
-        spacing: 8
+        anchors.margins: root.compact ? 14 : 18
+        spacing: root.compact ? 5 : 8
         Row {
             width: parent.width
-            height: 42
+            height: root.compact ? 32 : 42
             spacing: 10
             Text {
                 text: Qt.formatDate(root.now, "d")
-                color: "#ff6961"
+                color: Theme.islandAccent
                 font.family: "sans-serif"
-                font.pixelSize: 36
+                font.pixelSize: root.compact ? 30 : 36
                 font.weight: Font.Light
             }
             Column {
                 anchors.verticalCenter: parent.verticalCenter
                 Text {
                     text: Qt.formatDate(root.now, "dddd")
-                    color: "#f5f5f7"
+                    color: Theme.islandText
                     font.pixelSize: 14
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: Qt.formatDate(root.now, "MMMM yyyy")
-                    color: "#b9b9bf"
+                    color: Theme.islandDim
                     font.pixelSize: 11
                 }
             }
@@ -102,7 +104,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.monthLabel
-                color: "#f5f5f7"
+                color: Theme.islandText
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
             }
@@ -117,11 +119,11 @@ Rectangle {
                         width: index === 1 ? 50 : 28
                         height: 28
                         radius: 7
-                        color: nav.containsMouse ? "#24ffffff" : "transparent"
+                        color: nav.containsMouse ? Theme.islandHover : "transparent"
                         Text {
                             anchors.centerIn: parent
                             text: parent.modelData
-                            color: "#e8e8ed"
+                            color: Theme.islandText
                             font.pixelSize: parent.index === 1 ? 11 : 22
                         }
                         MouseArea {
@@ -147,10 +149,10 @@ Rectangle {
                 model: 7
                 delegate: Text {
                     required property int index
-                    width: (root.width - 36) / 7
+                    width: (root.width - (root.compact ? 28 : 36)) / 7
                     horizontalAlignment: Text.AlignHCenter
                     text: Qt.locale().standaloneDayName(((root.firstWeekday + index + 6) % 7) + 1, Locale.ShortFormat).slice(0, 2)
-                    color: "#9c9ca5"
+                    color: Theme.islandDim
                     font.pixelSize: 10
                 }
             }
@@ -168,20 +170,20 @@ Rectangle {
                     required property bool inMonth
                     required property bool isToday
                     readonly property bool selected: root.selectedDate.getFullYear() === year && root.selectedDate.getMonth() === month && root.selectedDate.getDate() === day
-                    width: (root.width - 36) / 7
-                    height: 28
+                    width: (root.width - (root.compact ? 28 : 36)) / 7
+                    height: root.compact ? 24 : 28
                     Rectangle {
                         anchors.centerIn: parent
-                        width: 27
-                        height: 27
+                        width: root.compact ? 23 : 27
+                        height: root.compact ? 23 : 27
                         radius: 14
-                        color: cell.isToday ? "#ff6961" : cell.selected ? "#35ffffff" : dayMouse.containsMouse ? "#20ffffff" : "transparent"
+                        color: cell.isToday ? Theme.islandAccent : cell.selected ? Theme.islandHover : dayMouse.containsMouse ? Theme.islandHover : "transparent"
                         border.width: cell.selected && !cell.isToday ? 1 : 0
-                        border.color: "#80ffffff"
+                        border.color: Theme.islandBorder
                         Text {
                             anchors.centerIn: parent
                             text: cell.day
-                            color: cell.isToday ? "white" : cell.inMonth ? "#efeff4" : "#73737c"
+                            color: cell.isToday ? Theme.islandTodayText : cell.inMonth ? Theme.islandText : Qt.rgba(Theme.islandDim.r, Theme.islandDim.g, Theme.islandDim.b, 0.45)
                             font.pixelSize: 12
                             font.weight: cell.isToday ? Font.Bold : Font.Normal
                         }
@@ -205,7 +207,7 @@ Rectangle {
             width: parent.width
             text: root.selectedLabel
             horizontalAlignment: Text.AlignHCenter
-            color: "#b9b9bf"
+            color: Theme.islandDim
             font.pixelSize: 11
         }
     }

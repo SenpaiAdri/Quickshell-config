@@ -12,17 +12,17 @@ Rectangle {
     property bool exiting: false
     property var expandedGroups: ({})
     readonly property real frameW: 400
-    readonly property real frameH: 700
+    readonly property real frameH: 900
     signal hideRequested
     signal clearRequested
     signal removeRequested(int index)
     signal removeGroupRequested(string appKey)
     signal dndToggled
 
-    color: Glass.panel
+    color: Theme.islandBg
     radius: Glass.radius
     border.width: 1
-    border.color: Glass.stroke
+    border.color: Theme.islandBorder
     clip: true
     opacity: progress
     transform: Translate {
@@ -114,7 +114,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Notification Center"
-                color: Glass.text
+                color: Theme.islandText
                 font.family: Glass.font
                 font.pixelSize: 17
                 font.weight: Font.DemiBold
@@ -124,11 +124,11 @@ Rectangle {
                 width: 28
                 height: 28
                 radius: 14
-                color: closeHover.containsMouse ? Glass.hover : Glass.card
+                color: closeHover.containsMouse ? Theme.islandHover : Theme.notifRowBg
                 Text {
                     anchors.centerIn: parent
                     text: "×"
-                    color: Glass.secondary
+                    color: Theme.islandDim
                     font.pixelSize: 20
                 }
                 MouseArea {
@@ -143,7 +143,7 @@ Rectangle {
             width: parent.width
             height: 50
             radius: 16
-            color: Glass.card
+            color: Theme.notifRowBg
             Row {
                 anchors.left: parent.left
                 anchors.leftMargin: 14
@@ -151,20 +151,20 @@ Rectangle {
                 spacing: 10
                 Text {
                     text: "☾"
-                    color: root.dnd ? Glass.accent : Glass.text
+                    color: root.dnd ? Theme.islandAccent : Theme.islandText
                     font.pixelSize: 23
                 }
                 Column {
                     Text {
                         text: "Do Not Disturb"
-                        color: Glass.text
+                        color: Theme.islandText
                         font.family: Glass.font
                         font.pixelSize: 13
                         font.weight: Font.DemiBold
                     }
                     Text {
                         text: root.dnd ? "Notifications delivered quietly" : "Allow notifications"
-                        color: Glass.secondary
+                        color: Theme.islandDim
                         font.family: Glass.font
                         font.pixelSize: 10
                     }
@@ -177,14 +177,14 @@ Rectangle {
                 width: 34
                 height: 20
                 radius: 10
-                color: root.dnd ? Glass.accent : "#65708090"
+                color: root.dnd ? Theme.islandAccent : Theme.islandHover
                 Rectangle {
                     width: 16
                     height: 16
                     radius: 8
                     y: 2
                     x: root.dnd ? 16 : 2
-                    color: "white"
+                    color: root.dnd ? Theme.islandTodayText : Theme.islandText
                     Behavior on x {
                         NumberAnimation {
                             duration: 150
@@ -217,7 +217,7 @@ Rectangle {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Notifications"
-                        color: Glass.secondary
+                        color: Theme.islandDim
                         font.family: Glass.font
                         font.pixelSize: 12
                         font.weight: Font.DemiBold
@@ -227,7 +227,7 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Clear All"
                         visible: root.history.length > 0
-                        color: clearHover.containsMouse ? Glass.text : Glass.secondary
+                        color: clearHover.containsMouse ? Theme.islandText : Theme.islandDim
                         font.family: Glass.font
                         font.pixelSize: 12
                         MouseArea {
@@ -243,12 +243,12 @@ Rectangle {
                     width: parent.width
                     height: 74
                     radius: 18
-                    color: Glass.card
+                    color: Theme.notifRowBg
                     visible: root.history.length === 0
                     Text {
                         anchors.centerIn: parent
                         text: "No Notifications"
-                        color: Glass.secondary
+                        color: Theme.islandDim
                         font.family: Glass.font
                         font.pixelSize: 14
                     }
@@ -291,14 +291,14 @@ Rectangle {
                                 anchors.left: parent.left
                                 textFormat: Text.PlainText
                                 text: group.modelData.app
-                                color: Glass.secondary
+                                color: Theme.islandDim
                                 font.family: Glass.font
                                 font.pixelSize: 11
                             }
                             Text {
                                 anchors.right: parent.right
                                 text: "Show Less"
-                                color: Glass.secondary
+                                color: Theme.islandDim
                                 font.family: Glass.font
                                 font.pixelSize: 11
                                 MouseArea {
@@ -346,10 +346,10 @@ Rectangle {
                                         NumberAnimation { duration: 360; easing.type: Easing.OutCubic }
                                     }
                                     radius: 18
-                                    color: cardHover.containsMouse ? "#f0404248"
-                                           : entry.index > 0 && group.expansion < 1 ? "#ee454950" : "#ee303238"
+                                    color: cardHover.containsMouse ? Theme.islandHover
+                                           : entry.index > 0 && group.expansion < 1 ? Qt.tint(Theme.islandBg, Theme.islandHover) : Qt.tint(Theme.islandBg, Theme.notifRowBg)
                                     Behavior on color { ColorAnimation { duration: 220 } }
-                                    border.color: Glass.stroke
+                                    border.color: Theme.islandBorder
                                     border.width: 1
                                     MouseArea {
                                         id: cardHover
@@ -368,7 +368,7 @@ Rectangle {
                                             width: 36
                                             height: 36
                                             radius: 9
-                                            color: "#535863"
+                                            color: Theme.islandHover
                                             Image {
                                                 id: artwork
                                                 anchors.fill: parent
@@ -383,7 +383,7 @@ Rectangle {
                                                 font.family: Glass.font
                                                 font.pixelSize: 18
                                                 font.weight: Font.DemiBold
-                                                color: Glass.text
+                                                color: Theme.islandText
                                             }
                                         }
                                         Column {
@@ -397,7 +397,7 @@ Rectangle {
                                                     elide: Text.ElideRight
                                                     text: entry.h.app || "Notification"
                                                     textFormat: Text.PlainText
-                                                    color: Glass.secondary
+                                                    color: Theme.islandDim
                                                     font.family: Glass.font
                                                     font.pixelSize: 10
                                                     font.weight: Font.DemiBold
@@ -405,7 +405,7 @@ Rectangle {
                                                 Text {
                                                     anchors.right: parent.right
                                                     text: entry.stack ? group.modelData.items.length + " notifications" : (entry.h.stamp || "now")
-                                                    color: Glass.secondary
+                                                    color: Theme.islandDim
                                                     font.family: Glass.font
                                                     font.pixelSize: 10
                                                 }
@@ -414,7 +414,7 @@ Rectangle {
                                                 width: parent.width
                                                 text: entry.h.summary || ""
                                                 textFormat: Text.PlainText
-                                                color: Glass.text
+                                                color: Theme.islandText
                                                 font.family: Glass.font
                                                 font.pixelSize: 13
                                                 font.weight: Font.DemiBold
@@ -427,7 +427,7 @@ Rectangle {
                                                 text: entry.h.body || ""
                                                 textFormat: Text.PlainText
                                                 visible: text !== ""
-                                                color: Glass.text
+                                                color: Theme.islandText
                                                 font.family: Glass.font
                                                 font.pixelSize: 12
                                                 wrapMode: Text.Wrap
@@ -447,7 +447,7 @@ Rectangle {
                                                         width: visible ? Math.min(actionLabel.implicitWidth + 20, 230) : 0
                                                         height: visible ? 26 : 0
                                                         radius: 8
-                                                        color: actionHover.containsMouse ? Glass.hover : Glass.card
+                                                        color: actionHover.containsMouse ? Theme.islandHover : Theme.notifRowBg
                                                         Text {
                                                             id: actionLabel
                                                             anchors.centerIn: parent
@@ -455,7 +455,7 @@ Rectangle {
                                                             elide: Text.ElideRight
                                                             text: action.modelData.text
                                                             textFormat: Text.PlainText
-                                                            color: Glass.text
+                                                            color: Theme.islandText
                                                             font.family: Glass.font
                                                             font.pixelSize: 11
                                                         }
@@ -479,13 +479,13 @@ Rectangle {
                                         width: 22
                                         height: 22
                                         radius: 11
-                                        color: "#6c6e74"
+                                        color: Qt.tint(Theme.islandBg, Theme.islandHover)
                                         visible: (entry.index === 0 || group.expanded)
                                                  && (cardHover.containsMouse || dismissHover.containsMouse)
                                         Text {
                                             anchors.centerIn: parent
                                             text: "×"
-                                            color: "white"
+                                            color: Theme.islandText
                                             font.pixelSize: 17
                                         }
                                         MouseArea {
@@ -504,6 +504,7 @@ Rectangle {
         }
         CalendarWidget {
             id: calendar
+            compact: true
             width: parent.width
             height: implicitHeight
         }
