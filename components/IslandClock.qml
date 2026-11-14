@@ -15,20 +15,19 @@ Rectangle {
     // from a perfect circle into the card corner — no staged retargets.
     radius: (1 - root.progress) * Math.min(root.width, root.height) / 2 + root.progress * Theme.islandRadiusExpanded
     border.color: Theme.islandBorder
-    border.width: 1
+    border.width: Math.min(1, width / 2, height / 2)
     clip: true
 
     signal hideRequested()
 
-    // 0 = dot, 1 = full card. Animated once per open (OutExpo: fast
-    // expansion, soft landing — the Dynamic Island feel).
+    // 0 = a single pixel, 1 = the full card, with a soft landing.
     property real progress: 0
     property bool exiting: false
     property int monthOffset: 0
     property date now: new Date()
 
-    readonly property real frameW: Theme.islandDot + (Theme.islandExpandedW - Theme.islandDot) * root.progress
-    readonly property real frameH: Theme.islandDot + (Theme.islandExpandedH - Theme.islandDot) * root.progress
+    readonly property real frameW: 1 + (Theme.islandExpandedW - 1) * root.progress
+    readonly property real frameH: 1 + (Theme.islandExpandedH - 1) * root.progress
     // Contents fade in over the final stretch of the morph only.
     readonly property real contentOpacity: Math.min(1, Math.max(0, (root.progress - 0.8) / 0.2))
 
@@ -111,18 +110,17 @@ Rectangle {
         id: morphIn
         target: root
         property: "progress"
-        from: 0
         to: 1
-        duration: 650
-        easing.type: Easing.OutExpo
+        duration: 380
+        easing.type: Easing.OutCubic
     }
     NumberAnimation {
         id: morphOut
         target: root
         property: "progress"
         to: 0
-        duration: 220
-        easing.type: Easing.InCubic
+        duration: 200
+        easing.type: Easing.InOutCubic
         onFinished: {
             root.exiting = false;
             root.hideRequested();
@@ -151,38 +149,6 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         onClicked: {}
-    }
-
-    // ---- morph start: bare pulsing dot, dissolves as expansion begins ----
-    // Outer fades with progress; inner runs the pulse loop so the two
-    // opacity drivers never fight over one property.
-    Item {
-        anchors.centerIn: parent
-        width: 8
-        height: 8
-        opacity: 1 - Math.min(1, root.progress * 4)
-        visible: opacity > 0
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 4
-            color: Theme.islandAccent
-
-            SequentialAnimation on opacity {
-                loops: Animation.Infinite
-                running: root.progress < 0.3
-                NumberAnimation {
-                    to: 0.3
-                    duration: 900
-                    easing.type: Easing.InOutQuad
-                }
-                NumberAnimation {
-                    to: 1
-                    duration: 900
-                    easing.type: Easing.InOutQuad
-                }
-            }
-        }
     }
 
     // ---- expanded card: hero clock + month calendar ----

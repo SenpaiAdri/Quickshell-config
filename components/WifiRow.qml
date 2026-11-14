@@ -60,7 +60,7 @@ Column {
                 width: 18
                 height: 17
                 strength: root.signal
-                ink: root.active ? "white" : Glass.text
+                ink: root.active ? Glass.accentText : Glass.text
             }
         }
         Text {
@@ -155,7 +155,7 @@ Column {
             enabled: password.text.length > 0 && !root.busy
             contentItem: Text {
                 text: "Join"
-                color: "white"
+                color: Glass.accentText
                 font.family: Glass.font
                 font.pixelSize: 12
                 horizontalAlignment: Text.AlignHCenter

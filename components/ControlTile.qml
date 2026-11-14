@@ -29,7 +29,7 @@ Rectangle {
             text: tile.glyph
             font.family: Theme.iconFont
             font.pixelSize: 16
-            color: Glass.text
+            color: tile.selected ? Glass.accentText : Glass.text
         }
         Accessible.role: Accessible.Button
         Accessible.name: tile.title + ", " + tile.detail

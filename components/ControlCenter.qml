@@ -5,15 +5,12 @@ import Quickshell.Networking
 import Quickshell.Services.Pipewire
 import "../theme"
 
-Rectangle {
+IslandPanel {
     id: root
     required property bool dnd
     signal dndToggled()
     signal wifiRequested()
     signal soundRequested()
-    signal hideRequested()
-    property real progress: 0
-    property bool closing: false
     property string profile: "unavailable"
     property var availableProfiles: []
     readonly property bool performanceSupported: availableProfiles.indexOf("performance") !== -1
@@ -25,26 +22,11 @@ Rectangle {
     readonly property var wifiDevices: devices.values.filter(d => d.type === DeviceType.Wifi)
     readonly property var adapter: wifiDevices.find(d => d.connected)
     readonly property var wireless: adapter ? adapter.networks.values.find(net => net.connected) : null
-    radius: Glass.radius
-    color: Glass.panel
-    border.color: Glass.stroke
-    opacity: progress
-    scale: 0.96 + 0.04 * progress
-    transformOrigin: Item.TopRight
+    expandedRadius: Glass.radius
+    panelColor: Glass.panel
+    panelBorder: Glass.stroke
 
-    function open(): void {
-        closing = false;
-        transition.to = 1;
-        transition.restart();
-        forceActiveFocus();
-        refreshProfile("status");
-    }
-    function close(): void {
-        if (closing) return;
-        closing = true;
-        transition.to = 0;
-        transition.restart();
-    }
+    onOpening: refreshProfile("status")
     function refreshProfile(action: string): void {
         if (power.running) return;
         const directory = Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config";
@@ -72,14 +54,6 @@ Rectangle {
         onTriggered: root.refreshProfile("status")
     }
     PwObjectTracker { objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : [] }
-    NumberAnimation {
-        id: transition
-        target: root
-        property: "progress"
-        duration: 160
-        easing.type: Easing.OutCubic
-        onFinished: if (root.closing) root.hideRequested()
-    }
     Keys.onEscapePressed: close()
     MouseArea { anchors.fill: parent }
     Column {

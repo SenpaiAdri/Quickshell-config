@@ -3,7 +3,7 @@ import QtQuick
 
 import "../theme"
 
-Rectangle {
+IslandPanel {
     id: root
     property string kind: "volume"
     property int level: 0
@@ -31,10 +31,11 @@ Rectangle {
 
     width: Theme.pillWidth
     height: Theme.pillHeight
-    radius: height / 2
-    color: Glass.panel
-    border.color: Glass.stroke
-    border.width: Theme.pillBorderWidth
+    expandedRadius: height / 2
+    centered: true
+    verticallyCentered: true
+    panelColor: Glass.panel
+    panelBorder: Glass.stroke
 
     Row {
         anchors.centerIn: parent
@@ -45,7 +46,7 @@ Rectangle {
             width: Theme.iconBoxWidth
             horizontalAlignment: Text.AlignHCenter
             text: root.icon
-            color: Theme.iconColor
+            color: Glass.text
             font.family: Theme.iconFont
             font.pixelSize: Theme.iconSize
         }

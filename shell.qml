@@ -30,8 +30,9 @@ ShellRoot {
 
         // Clicks pass through everywhere except the pill itself.
         mask: Region {
-            item: pill
+            item: pill.morphItem
         }
+        BackgroundEffect.blurRegion: Region { item: pill.morphItem; radius: pill.expandedRadius }
 
         property string kind: "volume"
         property int level: 0
@@ -41,7 +42,7 @@ ShellRoot {
             id: hideTimer
             interval: Theme.hideAfterMs
             repeat: false
-            onTriggered: osd.visible = false
+            onTriggered: pill.close()
         }
 
         function showOsd(k: string, v: int, m: bool): void {
@@ -49,6 +50,7 @@ ShellRoot {
             osd.level = Math.max(0, Math.min(100, v));
             osd.muted = m;
             osd.visible = true;
+            pill.open();
             hideTimer.restart();
         }
 
@@ -61,9 +63,12 @@ ShellRoot {
 
         OsdPill {
             id: pill
+            anchors.centerIn: parent
             kind: osd.kind
             level: osd.level
             muted: osd.muted
+            onOpened: hideTimer.restart()
+            onHideRequested: osd.visible = false
         }
     }
 
@@ -445,7 +450,9 @@ ShellRoot {
 
         Component {
             id: toastComponent
-            NotifToast {}
+            NotifToast {
+                originX: tray.originFor("notifications", toastWin.screen, toastStack.x, width, width - 48)
+            }
         }
 
         // Right-aligned stack in a full-width strip: swiped cards stay
@@ -468,12 +475,35 @@ ShellRoot {
                                         "island": island, "notifications": center})
         readonly property var current: views[page]
         property bool fromOverview: false
+        property var buttonOrigins: ({})
+        property var buttonScreen: null
+        readonly property real panelLeft: screen ? screen.width - content.width - 10 : 0
+        function originFor(name: string, monitor: var, left: real, panelWidth: real, fallback: real): real {
+            const suffix = "@" + (monitor ? monitor.name : "");
+            let position = buttonOrigins[name + suffix];
+            if (position === undefined && fromOverview)
+                position = buttonOrigins["controls" + suffix];
+            const origin = position === undefined ? fallback : position - left;
+            return Math.max(0.5, Math.min(panelWidth - 0.5, origin));
+        }
+        function toggleFromButton(name: string, monitorName: string, position: int): void {
+            const origins = Object.assign({}, buttonOrigins);
+            origins[name + "@" + monitorName] = position;
+            buttonOrigins = origins;
+            if (visible && page === name && !current.exiting && screen && screen.name === monitorName) {
+                current.close();
+                return;
+            }
+            buttonScreen = Quickshell.screens.find(s => s.name === monitorName) || currentScreen();
+            showPage(name, false);
+        }
         function currentScreen(): var {
             const monitor = Hyprland.focusedMonitor;
             return Quickshell.screens.find(s => monitor && s.name === monitor.name) || Quickshell.screens[0] || null;
         }
         function showPage(name: string, detail: bool): void {
-            if (!visible) screen = currentScreen();
+            if (!visible || buttonScreen) screen = buttonScreen || currentScreen();
+            buttonScreen = null;
             fromOverview = !!detail;
             page = name;
             visible = true;
@@ -485,7 +515,7 @@ ShellRoot {
             current.forceActiveFocus();
         }
         function togglePage(name: string): void {
-            if (visible && page === name) current.close();
+            if (visible && page === name && !current.exiting) current.close();
             else showPage(name, false);
         }
         function closePage(name: string): void {
@@ -496,7 +526,7 @@ ShellRoot {
         }
 
         anchors { top: true; left: page === "island"; right: true }
-        margins { top: page === "island" ? Theme.islandTopMargin : 36; right: page === "island" ? 0 : 10 }
+        margins { top: 36; right: page === "island" ? 0 : 10 }
         implicitWidth: Math.min(screen ? screen.width - 20 : 400, Math.ceil(current.frameW))
         implicitHeight: Math.min(screen ? screen.height - 48 : Math.ceil(current.frameH), Math.ceil(current.frameH) + (back.visible ? 32 : 0))
         exclusionMode: ExclusionMode.Ignore
@@ -505,8 +535,15 @@ ShellRoot {
         color: "transparent"
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
         WlrLayershell.namespace: "desktop-controls"
-        BackgroundEffect.blurRegion: Region { item: tray.page === "island" ? island : content; radius: Glass.radius }
-        mask: Region { item: tray.page === "island" ? island : panelContent }
+        BackgroundEffect.blurRegion: Region {
+            item: tray.page === "island" ? island : tray.current.morphItem
+            radius: Glass.radius
+            Region { item: back }
+        }
+        mask: Region {
+            item: tray.page === "island" ? island : tray.current.morphItem
+            Region { item: back }
+        }
 
         HyprlandFocusGrab {
             windows: [tray]
@@ -517,18 +554,21 @@ ShellRoot {
             target: "controls"
             function status(): string { return "ready"; }
             function toggle(): void { tray.togglePage("controls"); }
+            function toggleAt(monitor: string, x: int): void { tray.toggleFromButton("controls", monitor, x); }
             function show(): void { tray.showPage("controls", false); }
             function hide(): void { tray.closePage("controls"); }
         }
         IpcHandler {
             target: "sound"
             function toggle(): void { tray.togglePage("sound"); }
+            function toggleAt(monitor: string, x: int): void { tray.toggleFromButton("sound", monitor, x); }
             function show(): void { tray.showPage("sound", false); }
             function hide(): void { tray.closePage("sound"); }
         }
         IpcHandler {
             target: "wifi"
             function toggle(): void { tray.togglePage("wifi"); }
+            function toggleAt(monitor: string, x: int): void { tray.toggleFromButton("wifi", monitor, x); }
             function show(): void { tray.showPage("wifi", false); }
             function hide(): void { tray.closePage("wifi"); }
         }
@@ -541,6 +581,7 @@ ShellRoot {
         IpcHandler {
             target: "notifs"
             function toggle(): void { tray.togglePage("notifications"); }
+            function toggleAt(monitor: string, x: int): void { tray.toggleFromButton("notifications", monitor, x); }
             function show(): void { tray.showPage("notifications", false); }
             function hide(): void { tray.closePage("notifications"); }
             function clear(): void {
@@ -576,6 +617,8 @@ ShellRoot {
                 visible: tray.visible && tray.fromOverview
                 width: parent.width
                 height: visible ? 32 : 0
+                opacity: Math.max(0, Math.min(1, (tray.current.progress - 0.8) / 0.2))
+                enabled: tray.current.progress > 0.85
                 color: Glass.panel
                 border.color: Glass.stroke
                 radius: 14
@@ -602,18 +645,21 @@ ShellRoot {
                 anchors { top: back.bottom; bottom: parent.bottom; left: parent.left; right: parent.right }
                 WifiMenu {
                     id: wifiMenu
+                    originX: tray.originFor("wifi", tray.screen, tray.panelLeft, width, width - 0.5)
                     anchors.fill: parent
                     visible: tray.visible && tray.page === "wifi"
                     onHideRequested: tray.finish("wifi")
                 }
                 SoundMenu {
                     id: soundMenu
+                    originX: tray.originFor("sound", tray.screen, tray.panelLeft, width, width - 0.5)
                     anchors.fill: parent
                     visible: tray.visible && tray.page === "sound"
                     onHideRequested: tray.finish("sound")
                 }
                 ControlCenter {
                     id: controls
+                    originX: tray.originFor("controls", tray.screen, tray.panelLeft, width, width - 0.5)
                     anchors.fill: parent
                     visible: tray.visible && tray.page === "controls"
                     dnd: notifState.dnd
@@ -633,6 +679,7 @@ ShellRoot {
                 }
                 NotifCenter {
                     id: center
+                    originX: tray.originFor("notifications", tray.screen, tray.panelLeft, width, width - 0.5)
                     anchors.fill: parent
                     visible: tray.visible && tray.page === "notifications"
                     history: notifState.history

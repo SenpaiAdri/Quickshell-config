@@ -107,7 +107,7 @@ Item {
             width: 18
             height: 18
             radius: 9
-            color: "white"
+            color: Glass.text
             border.width: slider.activeFocus ? 2 : 0
             border.color: Glass.accent
         }

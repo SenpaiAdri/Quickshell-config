@@ -3,47 +3,26 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import "../theme"
 
-Rectangle {
+IslandPanel {
     id: root
     required property var history
     property bool dnd: false
     property int unread: 0
-    property real progress: 0
-    property bool exiting: false
     property var expandedGroups: ({})
     readonly property real frameW: 400
     readonly property real frameH: 900
-    signal hideRequested
     signal clearRequested
     signal removeRequested(int index)
     signal removeGroupRequested(string appKey)
     signal dndToggled
 
-    color: Theme.islandBg
-    radius: Glass.radius
-    border.width: 1
-    border.color: Theme.islandBorder
+    panelColor: Theme.islandBg
+    expandedRadius: Glass.radius
+    panelBorder: Theme.islandBorder
     clip: true
-    opacity: progress
-    transform: Translate {
-        x: (1 - root.progress) * 48
-    }
     focus: true
 
-    function open(): void {
-        exiting = false;
-        entrance.to = 1;
-        entrance.start();
-        calendar.refresh();
-        forceActiveFocus();
-    }
-    function close(): void {
-        if (exiting)
-            return;
-        exiting = true;
-        entrance.to = 0;
-        entrance.start();
-    }
+    onOpening: calendar.refresh()
     function toggleGroup(key): void {
         var next = Object.assign({}, expandedGroups);
         next[key] = !next[key];
@@ -84,17 +63,6 @@ Rectangle {
             group.items.push(i);
         }
         return output;
-    }
-    NumberAnimation {
-        id: entrance
-        target: root
-        property: "progress"
-        duration: 240
-        easing.type: Easing.OutCubic
-        onFinished: if (root.exiting) {
-            root.exiting = false;
-            root.hideRequested();
-        }
     }
     Keys.onEscapePressed: close()
     // Consume inside clicks; the shell owns the outside-click backdrop.

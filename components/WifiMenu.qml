@@ -5,15 +5,12 @@ import Quickshell.Io
 import Quickshell.Networking
 import "../theme"
 
-Rectangle {
+IslandPanel {
     id: root
-    color: Glass.panel
-    radius: Glass.radius
-    border.color: Glass.stroke
-    border.width: 1
+    panelColor: Glass.panel
+    expandedRadius: Glass.radius
+    panelBorder: Glass.stroke
     clip: true
-    property real progress: 0
-    property bool exiting: false
     readonly property real frameW: 340
     readonly property real frameH: Math.min(480, 162 + Math.max(60, networkColumn.implicitHeight) + (status ? statusLabel.height + 7 : 0))
     readonly property var wifiDevices: Networking.devices.values.filter(d => d.type === DeviceType.Wifi)
@@ -39,44 +36,14 @@ Rectangle {
     property var manageNetwork: null
     property bool otherExpanded: true
     property bool scanPause: false
-    signal hideRequested
-    opacity: progress
-    scale: 0.96 + 0.04 * progress
-    transformOrigin: Item.TopRight
 
-    function open(): void {
-        exiting = false;
+    onOpening: {
         pendingNetwork = null;
         manageNetwork = null;
         message = "";
         failed = false;
-        closing.stop();
-        opening.restart();
     }
-    function close(): void {
-        if (exiting)
-            return;
-        exiting = true;
-        pendingNetwork = null;
-        opening.stop();
-        closing.restart();
-    }
-    NumberAnimation {
-        id: opening
-        target: root
-        property: "progress"
-        to: 1
-        duration: 180
-        easing.type: Easing.OutCubic
-    }
-    NumberAnimation {
-        id: closing
-        target: root
-        property: "progress"
-        to: 0
-        duration: 120
-        onFinished: root.hideRequested()
-    }
+    onClosingStarted: pendingNetwork = null
 
     function isPersonal(network): bool {
         return [WifiSecurityType.WpaPsk, WifiSecurityType.Wpa2Psk, WifiSecurityType.Sae].indexOf(network.security) >= 0;
@@ -237,7 +204,7 @@ Rectangle {
                     width: 19
                     height: 19
                     radius: 10
-                    color: "white"
+                    color: root.wifiEnabled ? Glass.accentText : Glass.text
                     Behavior on x {
                         NumberAnimation {
                             duration: 130

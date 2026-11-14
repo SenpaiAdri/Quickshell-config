@@ -3,16 +3,13 @@ import QtQuick
 import Quickshell.Services.Pipewire
 import "../theme"
 
-Rectangle {
+IslandPanel {
     id: root
-    color: Glass.panel
-    radius: Glass.radius
-    border.width: 1
-    border.color: Glass.stroke
+    panelColor: Glass.panel
+    expandedRadius: Glass.radius
+    panelBorder: Glass.stroke
     clip: true
 
-    property real progress: 0
-    property bool exiting: false
     readonly property var outputs: Pipewire.nodes.values.filter(n => n.audio && n.isSink && !n.isStream)
     readonly property var inputs: Pipewire.nodes.values.filter(n => n.audio && !n.isSink && !n.isStream && n.name.indexOf(".monitor") < 0)
     readonly property var sink: Pipewire.defaultAudioSink
@@ -20,47 +17,11 @@ Rectangle {
     readonly property real frameW: 366
     readonly property real expandedHeight: Math.min(640, body.implicitHeight + 40)
     readonly property real frameH: expandedHeight
-    opacity: progress
-    scale: 0.96 + 0.04 * progress
-    transformOrigin: Item.TopRight
-    signal hideRequested
 
     PwObjectTracker {
         objects: root.outputs.concat(root.inputs)
     }
 
-    function open(): void {
-        morphOut.stop();
-        exiting = false;
-        morphIn.restart();
-    }
-    function close(): void {
-        if (exiting)
-            return;
-        exiting = true;
-        morphIn.stop();
-        morphOut.restart();
-    }
-    NumberAnimation {
-        id: morphIn
-        target: root
-        property: "progress"
-        to: 1
-        duration: 180
-        easing.type: Easing.OutCubic
-    }
-    NumberAnimation {
-        id: morphOut
-        target: root
-        property: "progress"
-        to: 0
-        duration: 180
-        easing.type: Easing.InCubic
-        onFinished: {
-            root.exiting = false;
-            root.hideRequested();
-        }
-    }
     MouseArea {
         anchors.fill: parent
         onClicked: {}

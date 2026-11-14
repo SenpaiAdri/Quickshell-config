@@ -4,20 +4,17 @@
 // Display data is copied to plain props at spawn; `note` is only kept for
 // action invocation + withdraw handling (guarded — the server may drop it).
 // Same single-driver morph language as the island: one `progress` value
-// (0 gone → 1 settled) drives slide + fade; the timeout bar is time-based.
+// (0 dot → 1 expanded) drives its surface and content fade.
 pragma ComponentBehavior: Bound
 import QtQuick
-import Quickshell
 
 import "../theme"
 
-Rectangle {
+IslandPanel {
     id: root
-    color: Glass.panel
-    radius: 18
-    border.color: Glass.stroke
-    border.width: 1
-    // No clip: the hover close button intentionally overlaps the corner.
+    panelColor: Glass.panel
+    expandedRadius: 18
+    panelBorder: Glass.stroke
 
     required property int toastId
     required property string app
@@ -33,7 +30,6 @@ Rectangle {
     property int remainingMs: timeoutMs
     property double timerStart: 0
 
-    property real progress: 0
     property bool leaving: false
     // Swipe-to-dismiss offset (sideways only). The card follows the
     // pointer 1:1 while held; release past the threshold (or a fast
@@ -47,8 +43,8 @@ Rectangle {
     // Height follows content; the column defines it.
     height: body.implicitHeight + 24
 
-    opacity: root.progress * (1 - Math.min(1, root.dragDist / 220))
-    x: (1 - root.progress) * 56 + root.dragX
+    opacity: 1 - Math.min(1, root.dragDist / 220)
+    x: root.dragX
     // Scale the whole container (background + content) while held so the
     // card feels picked up. cardHover is declared below — forward ref is
     // fine (same as the close button's containsMouse binding).
@@ -62,12 +58,9 @@ Rectangle {
     }
 
     function show(): void {
-        enterAnim.start();
+        root.open();
         if (!sticky) {
             root.remainingMs = root.timeoutMs;
-            root.timerStart = Date.now();
-            expireTimer.interval = root.remainingMs;
-            expireTimer.start();
         }
     }
 
@@ -79,7 +72,7 @@ Rectangle {
     }
 
     function resumeExpiry(): void {
-        if (root.sticky || root.leaving || expireTimer.running)
+        if (root.sticky || root.leaving || root.progress < 1 || expireTimer.running)
             return;
         root.timerStart = Date.now();
         expireTimer.interval = root.remainingMs;
@@ -107,29 +100,12 @@ Rectangle {
         // Transient notifications have no history card to own their lifetime.
         if (expireTransient && root.note && root.note.tracked && root.note.transient)
             root.note.expire();
-        exitAnim.start();
+        root.close();
     }
 
-    NumberAnimation {
-        id: enterAnim
-        target: root
-        property: "progress"
-        from: 0
-        to: 1
-        duration: 280
-        easing.type: Easing.OutExpo
-    }
-    NumberAnimation {
-        id: exitAnim
-        target: root
-        property: "progress"
-        to: 0
-        duration: 220
-        easing.type: Easing.InCubic
-        onFinished: {
-            root.destroy();
-        }
-    }
+
+    onOpened: if (!sticky && !leaving && !hoverDetect.containsMouse) resumeExpiry()
+    onHideRequested: root.destroy()
 
     // Snap back when a swipe is released short of the threshold.
     NumberAnimation {
@@ -148,7 +124,6 @@ Rectangle {
         property: "dragX"
         duration: 180
         easing.type: Easing.OutCubic
-        onFinished: root.destroy()
     }
 
     Timer {
@@ -250,8 +225,7 @@ Rectangle {
                 var dir = Math.abs(vx) > 100 ? (vx > 0 ? 1 : -1) : (root.dragX >= 0 ? 1 : -1);
                 flingX.to = dir * 560;
 
-                root.leaving = true;
-                expireTimer.stop();
+                root.hideBanner(false);
                 if (root.note && root.note.tracked)
                     root.note.dismiss();
                 flingX.start();
@@ -291,7 +265,7 @@ Rectangle {
                 width: 48
                 height: 48
                 radius: 10
-                color: thumbImg.visible ? "transparent" : "#2c2c30"
+                color: thumbImg.visible ? "transparent" : Glass.hover
                 clip: true
 
                 Image {
@@ -306,7 +280,7 @@ Rectangle {
                     anchors.centerIn: parent
                     visible: !thumbImg.visible
                     text: root.app.charAt(0).toUpperCase()
-                    color: "#a0a0a8"
+                    color: Glass.secondary
                     font.family: Glass.font
                     font.pixelSize: 20
                     font.bold: true
@@ -381,7 +355,7 @@ Rectangle {
                             width: Math.min(actionLabel.implicitWidth + 24, 160)
                             height: 30
                             radius: 15
-                            color: btnHover.containsMouse ? Glass.hover : "#0dffffff"
+                            color: btnHover.containsMouse ? Glass.hover : Glass.card
                             border.color: Glass.stroke
                             border.width: 1
                             Text {
@@ -424,7 +398,7 @@ Rectangle {
             width: 22
             height: 22
             radius: 11
-            color: "#48484a"
+            color: Qt.tint(Glass.panel, Glass.hover)
             opacity: hoverDetect.containsMouse ? 1 : 0
             visible: opacity > 0
 
@@ -438,7 +412,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: "✕"
-                color: "#ffffff"
+                color: Glass.text
                 font.family: Glass.font
                 font.pixelSize: 11
                 font.bold: true
