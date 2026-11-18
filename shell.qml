@@ -437,7 +437,7 @@ ShellRoot {
             top: 36
         }
         implicitHeight: toastStack.implicitHeight
-        BackgroundEffect.blurRegion: Region { item: toastStack; radius: Glass.radius }
+        BackgroundEffect.blurRegion: toastWin.mask
         visible: toastStack.children.length > 0
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
@@ -445,13 +445,32 @@ ShellRoot {
         color: "transparent"
 
         mask: Region {
-            item: toastStack
+            regions: toastStack.children.filter(banner => banner.visible && banner.opacity > 0)
+                                        .map(banner => banner.surfaceRegion)
         }
 
         Component {
             id: toastComponent
             NotifToast {
+                id: banner
                 originX: tray.originFor("notifications", toastWin.screen, toastStack.x, width, width - 48)
+                // The surface morphs inside a card that also moves and scales when dragged.
+                readonly property TransformWatcher movement: TransformWatcher {
+                    a: banner.morphItem
+                    b: toastWin.contentItem
+                }
+                readonly property rect surfaceBounds: {
+                    movement.transform
+                    const surface = banner.morphItem
+                    return surface.mapToItem(toastWin.contentItem, Qt.rect(0, 0, surface.width, surface.height))
+                }
+                readonly property Region surfaceRegion: Region {
+                    x: Math.round(banner.surfaceBounds.x)
+                    y: Math.round(banner.surfaceBounds.y)
+                    width: Math.round(banner.surfaceBounds.x + banner.surfaceBounds.width) - x
+                    height: Math.round(banner.surfaceBounds.y + banner.surfaceBounds.height) - y
+                    radius: Math.round(banner.morphItem.radius * banner.scale)
+                }
             }
         }
 
