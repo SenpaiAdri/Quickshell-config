@@ -285,6 +285,10 @@ IslandPanel {
                                 required property int modelData
                                 readonly property var h: root.history[modelData] || ({})
                                 readonly property bool stack: group.stacked
+                                readonly property var swipeLeader: stack && index > 0 ? entries.itemAt(0) : entry
+                                readonly property real swipeDistance: group.width * 0.62
+                                property real swipeX: 0
+                                property bool dismissing: false
                                 readonly property real expandedY: {
                                     let offset = 0;
                                     for (let i = 0; i < index; i++) {
@@ -303,8 +307,46 @@ IslandPanel {
                                 visible: opacity > 0
                                 enabled: index === 0 || group.expanded
                                 z: group.modelData.items.length - index
+
+                                function dismiss(): void {
+                                    if (stack)
+                                        root.removeGroupRequested(group.modelData.key);
+                                    else
+                                        root.removeRequested(modelData);
+                                }
+
+                                function settleSwipe(released: bool): void {
+                                    dismissing = released && Math.abs(swipeX) >= Math.min(110, swipeDistance / 2);
+                                    swipeAnimation.to = dismissing ? Math.sign(swipeX) * swipeDistance : 0;
+                                    swipeAnimation.start();
+                                }
+
+                                DragHandler {
+                                    target: null
+                                    yAxis.enabled: false
+                                    enabled: !swipeAnimation.running && !entry.dismissing
+                                    cursorShape: Qt.ClosedHandCursor
+                                    onActiveTranslationChanged: if (active) entry.swipeX = activeTranslation.x
+                                    onGrabChanged: function (transition, point) {
+                                        if (transition === PointerDevice.UngrabExclusive)
+                                            entry.settleSwipe(true);
+                                        else if (transition === PointerDevice.CancelGrabExclusive)
+                                            entry.settleSwipe(false);
+                                    }
+                                }
+                                NumberAnimation {
+                                    id: swipeAnimation
+                                    target: entry
+                                    property: "swipeX"
+                                    duration: 180
+                                    easing.type: Easing.OutCubic
+                                    onFinished: if (entry.dismissing) entry.dismiss()
+                                }
+
                                 Rectangle {
                                     id: card
+                                    readonly property real dragOffset: entry.swipeLeader ? entry.swipeLeader.swipeX : 0
+                                    enabled: !entry.dismissing
                                     width: parent.width
                                     height: entry.index === 0 ? Math.max(76, row.implicitHeight + 24)
                                             : group.firstHeight * (1 - group.expansion)
@@ -314,15 +356,19 @@ IslandPanel {
                                         NumberAnimation { duration: 360; easing.type: Easing.OutCubic }
                                     }
                                     radius: 18
-                                    color: cardHover.containsMouse ? Theme.islandHover
-                                           : entry.index > 0 && group.expansion < 1 ? Qt.tint(Theme.islandBg, Theme.islandHover) : Qt.tint(Theme.islandBg, Theme.notifRowBg)
+                                    transform: Translate { x: card.dragOffset }
+                                    opacity: 1 - Math.min(1, Math.abs(dragOffset) / Math.max(1, entry.swipeDistance))
+                                    color: Qt.tint(Theme.islandBg, (cardHover.hovered && dragOffset === 0)
+                                                   || (entry.index > 0 && group.expansion < 1) ? Theme.islandHover : Theme.notifRowBg)
                                     Behavior on color { ColorAnimation { duration: 220 } }
                                     border.color: Theme.islandBorder
                                     border.width: 1
-                                    MouseArea {
+                                    HoverHandler {
                                         id: cardHover
+                                        blocking: false
+                                    }
+                                    MouseArea {
                                         anchors.fill: parent
-                                        hoverEnabled: true
                                         onClicked: entry.stack ? root.toggleGroup(group.modelData.key) : root.invokeDefault(entry.h)
                                     }
                                     Row {
@@ -448,8 +494,7 @@ IslandPanel {
                                         height: 22
                                         radius: 11
                                         color: Qt.tint(Theme.islandBg, Theme.islandHover)
-                                        visible: (entry.index === 0 || group.expanded)
-                                                 && (cardHover.containsMouse || dismissHover.containsMouse)
+                                        visible: entry.enabled && cardHover.hovered && card.dragOffset === 0
                                         Text {
                                             anchors.centerIn: parent
                                             text: "×"
@@ -457,10 +502,8 @@ IslandPanel {
                                             font.pixelSize: 17
                                         }
                                         MouseArea {
-                                            id: dismissHover
                                             anchors.fill: parent
-                                            hoverEnabled: true
-                                            onClicked: entry.stack ? root.removeGroupRequested(group.modelData.key) : root.removeRequested(entry.modelData)
+                                            onClicked: entry.dismiss()
                                         }
                                     }
                                 }
