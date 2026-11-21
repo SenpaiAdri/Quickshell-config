@@ -1,6 +1,4 @@
 import QtQuick
-import Quickshell
-import Quickshell.Io
 import Quickshell.Networking
 import Quickshell.Services.Pipewire
 import "../theme"
@@ -11,11 +9,9 @@ IslandPanel {
     signal dndToggled()
     signal wifiRequested()
     signal soundRequested()
-    property string profile: "unavailable"
-    property var availableProfiles: []
-    readonly property bool performanceSupported: availableProfiles.indexOf("performance") !== -1
-    readonly property bool performanceToggleAvailable: performanceSupported
-        && (availableProfiles.indexOf("balanced") !== -1 || availableProfiles.indexOf("power-saver") !== -1)
+    signal profileRequested()
+    required property string profile
+    required property string profileLabel
     readonly property int frameW: 356
     readonly property int frameH: content.implicitHeight + 32
     readonly property var devices: Networking.devices
@@ -26,33 +22,6 @@ IslandPanel {
     panelColor: Glass.panel
     panelBorder: Glass.stroke
 
-    onOpening: refreshProfile("status")
-    function refreshProfile(action: string): void {
-        if (power.running) return;
-        const directory = Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config";
-        power.exec([directory + "/waybar/scripts/power-profile.sh", action]);
-    }
-    Process {
-        id: power
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    const status = JSON.parse(text);
-                    root.profile = status.alt;
-                    root.availableProfiles = status.profiles || [];
-                } catch (err) {
-                    root.profile = "unavailable";
-                    root.availableProfiles = [];
-                }
-            }
-        }
-    }
-    Timer {
-        interval: 5000
-        running: root.visible && root.progress > 0.99
-        repeat: true
-        onTriggered: root.refreshProfile("status")
-    }
     PwObjectTracker { objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : [] }
     Keys.onEscapePressed: close()
     MouseArea { anchors.fill: parent }
@@ -99,14 +68,13 @@ IslandPanel {
         ControlTile {
             width: parent.width
             height: implicitHeight
-            title: "Performance"
+            title: "Power Profile"
             glyph: "󰓅"
             selected: root.profile === "performance"
-            detail: root.profile === "unavailable" ? "Unavailable"
-                : !root.performanceSupported ? "Unsupported"
-                : ({"performance":"On", "balanced":"Off · Balanced", "power-saver":"Off · Power Saver"})[root.profile] || "Unavailable"
-            toggleEnabled: !power.running && root.performanceToggleAvailable
-            onToggled: root.refreshProfile("toggle")
+            detail: root.profileLabel
+            hasDetails: true
+            onToggled: root.profileRequested()
+            onDetailsRequested: root.profileRequested()
         }
         Rectangle {
             width: parent.width

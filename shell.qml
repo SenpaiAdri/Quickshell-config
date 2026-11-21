@@ -490,7 +490,7 @@ ShellRoot {
     PanelWindow {
         id: tray
         property string page: "controls"
-        readonly property var views: ({"controls": controls, "wifi": wifiMenu, "sound": soundMenu,
+        readonly property var views: ({"controls": controls, "wifi": wifiMenu, "sound": soundMenu, "profile": profileMenu,
                                         "island": island, "notifications": center})
         readonly property var current: views[page]
         property bool fromOverview: false
@@ -592,6 +592,11 @@ ShellRoot {
             function hide(): void { tray.closePage("wifi"); }
         }
         IpcHandler {
+            target: "profile"
+            function toggle(): void { tray.togglePage("profile"); }
+            function toggleAt(monitor: string, x: int): void { tray.toggleFromButton("profile", monitor, x); }
+        }
+        IpcHandler {
             target: "island"
             function toggle(): void { tray.togglePage("island"); }
             function show(): void { tray.showPage("island", false); }
@@ -676,15 +681,27 @@ ShellRoot {
                     visible: tray.visible && tray.page === "sound"
                     onHideRequested: tray.finish("sound")
                 }
+                ProfileMenu {
+                    id: profileMenu
+                    originX: tray.originFor("profile", tray.screen, tray.panelLeft, width, width - 0.5)
+                    anchors.fill: parent
+                    visible: tray.visible && tray.page === "profile"
+                    overviewVisible: controls.visible
+                    onHideRequested: tray.finish("profile")
+                }
                 ControlCenter {
                     id: controls
                     originX: tray.originFor("controls", tray.screen, tray.panelLeft, width, width - 0.5)
                     anchors.fill: parent
                     visible: tray.visible && tray.page === "controls"
                     dnd: notifState.dnd
+                    profile: profileMenu.profile
+                    profileLabel: profileMenu.profileLabel
+                    onOpening: profileMenu.refresh()
                     onDndToggled: notifState.toggleDnd()
                     onWifiRequested: tray.showPage("wifi", true)
                     onSoundRequested: tray.showPage("sound", true)
+                    onProfileRequested: tray.showPage("profile", true)
                     onHideRequested: tray.finish("controls")
                 }
                 IslandClock {
