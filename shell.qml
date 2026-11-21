@@ -547,7 +547,7 @@ ShellRoot {
         anchors { top: true; left: page === "island"; right: true }
         margins { top: 36; right: page === "island" ? 0 : 10 }
         implicitWidth: Math.min(screen ? screen.width - 20 : 400, Math.ceil(current.frameW))
-        implicitHeight: Math.min(screen ? screen.height - 48 : Math.ceil(current.frameH), Math.ceil(current.frameH) + (back.visible ? 32 : 0))
+        implicitHeight: Math.min(Math.ceil(current.frameH), screen ? screen.height - 48 : Infinity)
         exclusionMode: ExclusionMode.Ignore
         aboveWindows: true
         visible: false
@@ -557,11 +557,9 @@ ShellRoot {
         BackgroundEffect.blurRegion: Region {
             item: tray.page === "island" ? island : tray.current.morphItem
             radius: Glass.radius
-            Region { item: back }
         }
         mask: Region {
             item: tray.page === "island" ? island : tray.current.morphItem
-            Region { item: back }
         }
 
         HyprlandFocusGrab {
@@ -636,37 +634,9 @@ ShellRoot {
             id: panelContent
             anchors.fill: parent
             Keys.onEscapePressed: tray.current.close()
-            Rectangle {
-                id: back
-                visible: tray.visible && tray.fromOverview
-                width: parent.width
-                height: visible ? 32 : 0
-                opacity: Math.max(0, Math.min(1, (tray.current.progress - 0.8) / 0.2))
-                enabled: tray.current.progress > 0.85
-                color: Glass.panel
-                border.color: Glass.stroke
-                radius: 14
-                activeFocusOnTab: true
-                Accessible.role: Accessible.Button
-                Accessible.name: "Back to Control Center"
-                Accessible.onPressAction: tray.showPage("controls", false)
-                Keys.onReturnPressed: tray.showPage("controls", false)
-                Text {
-                    anchors.centerIn: parent
-                    text: "‹   Control Center"
-                    color: Glass.text
-                    font.family: Glass.font
-                    font.pixelSize: 12
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: tray.showPage("controls", false)
-                }
-            }
             Item {
                 id: content
-                anchors { top: back.bottom; bottom: parent.bottom; left: parent.left; right: parent.right }
+                anchors.fill: parent
                 WifiMenu {
                     id: wifiMenu
                     originX: tray.originFor("wifi", tray.screen, tray.panelLeft, width, width - 0.5)

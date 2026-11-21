@@ -1,4 +1,6 @@
+pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
 import "../theme"
 
 Rectangle {
@@ -9,6 +11,7 @@ Rectangle {
     property bool selected: false
     property bool toggleEnabled: true
     property bool hasDetails: false
+    property bool fadeDetail: false
     signal toggled()
     signal detailsRequested()
     color: Glass.card
@@ -51,7 +54,7 @@ Rectangle {
         anchors.left: badge.right
         anchors.leftMargin: 7
         anchors.right: parent.right
-        anchors.rightMargin: 6
+        anchors.rightMargin: badge.anchors.leftMargin
         height: parent.height
         Column {
             anchors.left: parent.left
@@ -68,13 +71,37 @@ Rectangle {
                 elide: Text.ElideRight
             }
             Text {
+                id: detailLabel
+                readonly property real fadeStart: Math.max(0.5, 1 - 32 / Math.max(1, width))
                 width: parent.width
                 text: tile.detail
                 textFormat: Text.PlainText
                 font.family: Glass.font
                 font.pixelSize: 11
                 color: Glass.secondary
-                elide: Text.ElideRight
+                elide: tile.fadeDetail ? Text.ElideNone : Text.ElideRight
+                clip: tile.fadeDetail && implicitWidth > width
+                layer.enabled: tile.fadeDetail && implicitWidth > width * fadeStart && GraphicsInfo.api !== GraphicsInfo.Software
+                layer.effect: MultiEffect {
+                    autoPaddingEnabled: false
+                    maskEnabled: true
+                    maskSource: fadeMask
+                    // Blend across the mask's full alpha range.
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1
+                }
+
+                Rectangle {
+                    id: fadeMask
+                    anchors.fill: parent
+                    visible: false
+                    layer.enabled: detailLabel.layer.enabled
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: detailLabel.fadeStart; color: "white" }
+                        GradientStop { position: 1; color: "transparent" }
+                    }
+                }
             }
         }
         Text {

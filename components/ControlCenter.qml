@@ -50,6 +50,7 @@ IslandPanel {
                 glyph: ""
                 selected: root.wifiDevices.length > 0 && Networking.wifiEnabled && Networking.wifiHardwareEnabled
                 detail: !root.wifiDevices.length ? "Unavailable" : root.wireless ? root.wireless.name : selected ? "On" : "Off"
+                fadeDetail: !!root.wireless
                 hasDetails: true
                 toggleEnabled: root.wifiDevices.length > 0 && Networking.wifiHardwareEnabled
                 onToggled: Networking.wifiEnabled = !Networking.wifiEnabled
@@ -99,8 +100,9 @@ IslandPanel {
             Accessible.onPressAction: root.soundRequested()
             Keys.onReturnPressed: root.soundRequested()
             Text {
+                id: soundOptionsLabel
                 anchors.left: parent.left
-                anchors.leftMargin: 8
+                anchors.leftMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Sound options"
                 color: Glass.text
@@ -109,7 +111,7 @@ IslandPanel {
             }
             Text {
                 anchors.right: parent.right
-                anchors.rightMargin: 8
+                anchors.rightMargin: soundOptionsLabel.anchors.leftMargin
                 anchors.verticalCenter: parent.verticalCenter
                 text: "›"
                 color: Glass.secondary
