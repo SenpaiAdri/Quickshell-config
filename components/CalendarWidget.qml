@@ -1,4 +1,4 @@
-// Shared calendar widget for the date popup and Notification Center.
+// Month calendar for Notification Center.
 pragma ComponentBehavior: Bound
 import QtQuick
 import "../theme"
@@ -6,8 +6,9 @@ import "../theme"
 Rectangle {
     id: root
     property bool compact: false
+    readonly property int inset: compact ? 14 : 18
     implicitWidth: 364
-    implicitHeight: compact ? 288 : 350
+    implicitHeight: content.implicitHeight + 2 * inset
     radius: 20
     color: Qt.tint(Theme.islandBg, Theme.notifRowBg)
     border.color: Theme.islandBorder
@@ -19,7 +20,9 @@ Rectangle {
     readonly property int firstWeekday: Qt.locale().firstDayOfWeek % 7
     readonly property date viewMonth: new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
     readonly property string monthLabel: Qt.formatDate(viewMonth, "MMMM yyyy")
-    readonly property string selectedLabel: Qt.formatDate(selectedDate, "dddd, d MMMM")
+    readonly property bool canReturnToToday: monthOffset !== 0 || selectedDate.toDateString() !== now.toDateString()
+    readonly property bool selectionInView: selectedDate.getFullYear() === viewMonth.getFullYear()
+        && selectedDate.getMonth() === viewMonth.getMonth()
     signal dateSelected(date value)
 
     function refresh(): void {
@@ -50,7 +53,7 @@ Rectangle {
             });
         }
     }
-    onMonthOffsetChanged: rebuild()
+    onViewMonthChanged: rebuild()
     Component.onCompleted: refresh()
     ListModel {
         id: days
@@ -68,78 +71,86 @@ Rectangle {
     }
 
     Column {
-        anchors.fill: parent
-        anchors.margins: root.compact ? 14 : 18
-        spacing: root.compact ? 5 : 8
-        Row {
-            width: parent.width
-            height: root.compact ? 32 : 42
-            spacing: 10
-            Text {
-                text: Qt.formatDate(root.now, "d")
-                color: Theme.islandAccent
-                font.family: "sans-serif"
-                font.pixelSize: root.compact ? 30 : 36
-                font.weight: Font.Light
-            }
-            Column {
-                anchors.verticalCenter: parent.verticalCenter
-                Text {
-                    text: Qt.formatDate(root.now, "dddd")
-                    color: Theme.islandText
-                    font.pixelSize: 14
-                    font.weight: Font.DemiBold
-                }
-                Text {
-                    text: Qt.formatDate(root.now, "MMMM yyyy")
-                    color: Theme.islandDim
-                    font.pixelSize: 11
-                }
-            }
-        }
+        id: content
+        anchors { left: parent.left; right: parent.right; top: parent.top; margins: root.inset }
+        spacing: root.compact ? 6 : 8
+
         Item {
-            width: parent.width
-            height: 28
-            Text {
+            width: content.width
+            height: root.compact ? 36 : 42
+
+            Row {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.monthLabel
-                color: Theme.islandText
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-            }
-            Row {
-                anchors.right: parent.right
-                spacing: 3
-                Repeater {
-                    model: ["‹", "Today", "›"]
-                    delegate: Rectangle {
-                        required property int index
-                        required property string modelData
-                        width: index === 1 ? 50 : 28
-                        height: 28
-                        radius: 7
-                        color: nav.containsMouse ? Theme.islandHover : "transparent"
-                        Text {
-                            anchors.centerIn: parent
-                            text: parent.modelData
-                            color: Theme.islandText
-                            font.pixelSize: parent.index === 1 ? 11 : 22
-                        }
-                        MouseArea {
-                            id: nav
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (parent.index === 1)
-                                    root.today();
-                                else
-                                    root.monthOffset += parent.index === 0 ? -1 : 1;
-                            }
-                        }
+                spacing: 9
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: Qt.formatDate(root.selectedDate, "d")
+                    color: Theme.islandAccent
+                    font.family: Glass.font
+                    font.pixelSize: root.compact ? 28 : 34
+                    font.weight: Font.Light
+                }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        text: Qt.formatDate(root.selectedDate, "dddd")
+                        color: Theme.islandText
+                        font.family: Glass.font
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        visible: !root.selectionInView
+                        text: Qt.formatDate(root.selectedDate, "MMMM yyyy")
+                        color: Theme.islandDim
+                        font.family: Glass.font
+                        font.pixelSize: 11
                     }
                 }
+            }
+            CalendarButton {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.canReturnToToday
+                pill: true
+                text: "Today"
+                onClicked: root.today()
+            }
+        }
+        Rectangle {
+            width: content.width
+            height: 1
+            color: Theme.islandHover
+        }
+        Item {
+            width: Math.min(content.width, 196)
+            height: 28
+            anchors.horizontalCenter: parent.horizontalCenter
+
+            CalendarButton {
+                id: previousMonth
+                anchors.left: parent.left
+                text: "‹"
+                Accessible.name: "Previous month"
+                onClicked: root.monthOffset--
+            }
+            Text {
+                anchors { left: previousMonth.right; right: nextMonth.left; verticalCenter: parent.verticalCenter }
+                text: root.monthLabel
+                color: Theme.islandText
+                font.family: Glass.font
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+            }
+            CalendarButton {
+                id: nextMonth
+                anchors.right: parent.right
+                text: "›"
+                Accessible.name: "Next month"
+                onClicked: root.monthOffset++
             }
         }
         Row {
@@ -149,11 +160,12 @@ Rectangle {
                 model: 7
                 delegate: Text {
                     required property int index
-                    width: (root.width - (root.compact ? 28 : 36)) / 7
+                    width: content.width / 7
                     horizontalAlignment: Text.AlignHCenter
                     text: Qt.locale().standaloneDayName(((root.firstWeekday + index + 6) % 7) + 1, Locale.ShortFormat).slice(0, 2)
                     color: Theme.islandDim
-                    font.pixelSize: 10
+                    font.family: Glass.font
+                    font.pixelSize: 11
                 }
             }
         }
@@ -170,8 +182,8 @@ Rectangle {
                     required property bool inMonth
                     required property bool isToday
                     readonly property bool selected: root.selectedDate.getFullYear() === year && root.selectedDate.getMonth() === month && root.selectedDate.getDate() === day
-                    width: (root.width - (root.compact ? 28 : 36)) / 7
-                    height: root.compact ? 24 : 28
+                    width: content.width / 7
+                    height: root.compact ? 26 : 30
                     Rectangle {
                         anchors.centerIn: parent
                         width: root.compact ? 23 : 27
@@ -184,6 +196,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: cell.day
                             color: cell.isToday ? Theme.islandTodayText : cell.inMonth ? Theme.islandText : Qt.rgba(Theme.islandDim.r, Theme.islandDim.g, Theme.islandDim.b, 0.45)
+                            font.family: Glass.font
                             font.pixelSize: 12
                             font.weight: cell.isToday ? Font.Bold : Font.Normal
                         }
@@ -202,13 +215,6 @@ Rectangle {
                     }
                 }
             }
-        }
-        Text {
-            width: parent.width
-            text: root.selectedLabel
-            horizontalAlignment: Text.AlignHCenter
-            color: Theme.islandDim
-            font.pixelSize: 11
         }
     }
 }
